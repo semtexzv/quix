@@ -1,56 +1,43 @@
-# Quix = Quic + Actix
-Quic based transport for communicating between actors on different servers.
-
+# Quix
+Distribution layer for Actix.
 Aims to follow conventions set up by actix, and implement distribution capabilties, similar to erlangs [dist](https://erlang.org/doc/apps/erts/erl_dist_protocol.html).
 
 ### Messages
-In order to pass messages between nodes, we implement simple serialization and deserialization scheme.
-For now, we use JSON, however, this will be changed to a binary protocol.
+Both internal and user messages use Protobuf format for serialization
 
 ### Processes
-In order to better handle distribution, we will introduce a concent of a process, which is just an identified actor.
+In order to better handle distribution, we will introduce a concept of a process, which is just an identified actor.
 This actor is not referneced through the `Addr<A>` struct, but rather through `Pid<A>`, which internally: 
 1. Wraps `Addr<A>` and transparently passes messages to this addr
 2. Wraps `Remote<A>` and passes message to actor on remote node.
 
-```rust
-enum Pid<A> {
-    // local addr 
-    Local {
-        addr: Addr<A>,
-        id : Uuid,
-        node_id: &'static Uuid
-    },
-    Remote {
-        id: Uuid,
-        node_id: Uuid,
-        stream: Option<quinn::Stream>
-    }
-}
-```
-
-
 The `Pid<A>` can be obtained in 2 ways: 
-1. `Registry::register(self)` - Registers actor in node-local registry.
-2. `Handle<M> where M contains Pid<A2>` - Pids are transparent, and can be sent between nodes.
+1. Using `Process<A>` instead of `Context<A>` - New context type for actors, which have stable identity.
+2. Receiving a message containing a `Pid<A>` - Pids are transparent, and can be sent between nodes.
 The distribution subsystem should handle node lookup internally, thorugh the node-local registry.
-
 
 ### ProcessRegistry
 Is a node-local singleton, which contains a map of actors
 ```rust
 struct ProcessRegistry {
-    node_id: Uuid,
-    actors: FlurryMap<Uuid, LocalProxy>
+    actors: HashMap<Uuid, Dispatcher>
 }
 ```
-Each actor has to be proxied in order to perform message deserialization.
+
+### Message dispatching
+Each message which is passable accross network boundaries must be serializable using protobuf.
+
+The `ProcessDispatch` trait is responsible for creating a `Dispatcher` which performs message serialization and
+dispatching. It can be implemented by a proc macro:
+
 ```rust
-struct LocalProxy {
-    handlers: HashMap<Symbol, Box<Fn(Arc<[u8]>)>>
+#[derive(quix::ProcessDispatch)]
+#[dispatch(M1, M2)]
+pub struct Act {}
+
+impl Actor for Act {
+    type Context = Process<Self>;
 }
+impl Handler<M1> for Act { ... }
+impl Handler<M2> for Act { ... }
 ```
-
-We will have to implement method registration using codegen/tuple generics (Registration of `Handler<M>` for multiple `M`)
-
- 

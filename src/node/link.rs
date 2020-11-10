@@ -1,5 +1,5 @@
 use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler};
-use crate::node::{Meta, encode, decode, NodeMessage, Response, Request, PingPong};
+use crate::node::{Meta, encode, decode, NodeMessage, Response, Request, PingPong, NodeConfig, GetConfig};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
 use bytes::{Bytes, BytesMut};
@@ -32,12 +32,14 @@ impl NodeLink {
     pub async fn new(socket: TcpStream) -> (Uuid, Addr<Self>) {
         let codec = tokio_util::codec::LengthDelimitedCodec::builder();
 
+        let v = NodeConfig::from_registry().send(GetConfig).await.unwrap();
+        let x = Meta { id: v.id.to_string() };
+
         let (rx, tx) = socket.into_split();
 
         let mut tx = codec.new_write(tx);
         let mut rx = codec.new_read(rx);
 
-        let x = Meta { id: Uuid::nil().to_string() };
 
         tx.send(encode(&x)).await.unwrap();
         let other = rx.next().await.unwrap().unwrap();

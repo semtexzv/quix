@@ -71,9 +71,9 @@ impl Handler<Unregister> for ProcessRegistry {
 
 
 pub struct Dispatch {
-    pub(crate) id: Uuid,
-    pub(crate) method: String,
-    pub(crate) body: Bytes,
+    pub id: Uuid,
+    pub method: String,
+    pub body: Bytes,
 }
 
 impl Message for Dispatch {

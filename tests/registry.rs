@@ -15,6 +15,7 @@ impl Message for M {
 #[derive(quix::ProcessDispatch)]
 #[dispatch(M)]
 pub struct Act {}
+
 impl Actor for Act {
     type Context = Process<Self>;
 }

@@ -71,14 +71,6 @@ pub struct Response {
     body: Vec<u8>,
 }
 
-#[derive(prost::Message)]
-pub struct Announce {
-    #[prost(string, required, tag = "1")]
-    name: String,
-
-    #[prost(string, required, tag = "1")]
-    procid: String,
-}
 
 pub fn encode<M: prost::Message>(m: &M) -> Bytes {
     let mut buf = BytesMut::new();
@@ -98,6 +90,7 @@ impl Message for GetConfig {
 
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
+    pub id: Uuid,
     pub listen: SocketAddr
 }
 
@@ -115,7 +108,7 @@ impl Actor for NodeConfig {
 
 impl Default for NodeConfig {
     fn default() -> Self {
-        Self { listen: "127.0.0.1:9000".parse().unwrap() }
+        Self { listen: "127.0.0.1:9000".parse().unwrap(), id: Uuid::new_v4() }
     }
 }
 
@@ -181,6 +174,7 @@ impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
         let link = wrap_future(NodeLink::new(item.unwrap()));
         let fut = link
             .map(|(id, link), this: &mut Self, ctx| {
+                log::info!("Connected to: {:?}", id);
                 this.links.insert(id, link.clone());
             });
         ctx.spawn(fut);
@@ -214,6 +208,7 @@ impl Handler<Connect> for NodeControl {
 
         let link = wrap_future(conn);
         Box::pin(link.map(|(id, link), this: &mut Self, ctx| {
+            log::info!("Connected to: {:?}", id);
             this.links.insert(id, link.clone());
             link
         }))
