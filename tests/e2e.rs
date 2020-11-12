@@ -42,6 +42,7 @@ fn make_node(i: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
         actix::run(async move {
             tokio::time::delay_for(Duration::from_millis((i * 100) as u64)).await;
+
             let config = NodeConfig {
                 listen: format!("127.0.0.1:900{}", i).parse().unwrap(),
                 ..Default::default()

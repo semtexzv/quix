@@ -53,13 +53,3 @@ pub struct Response {
     #[prost(bytes, required, tag = "2")]
     pub body: Vec<u8>,
 }
-/*
-#[derive(prost::Message)]
-pub struct NodeInfo {
-    #[prost(string, required, tag = "1")]
-    id: String,
-
-    #[prost(string, required, tag = "2")]
-    socket_addr: String,
-}
- */

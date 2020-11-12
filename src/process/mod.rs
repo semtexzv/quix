@@ -1,4 +1,4 @@
-use actix::{Actor, Addr, Message, Handler, ActorFuture, AsyncContext, SpawnHandle, ActorContext, ActorState, Context, Supervised, SystemService, Recipient, WeakAddr};
+use actix::{Actor, Addr, Message, Handler, ActorFuture, AsyncContext, SpawnHandle, ActorContext, ActorState, Context, Supervised, SystemService, Recipient, WeakAddr, MailboxError};
 use uuid::Uuid;
 use actix::fut::wrap_future;
 use std::marker::PhantomData;
@@ -169,7 +169,7 @@ pub enum Pid<A: Actor> {
         id: Uuid,
         addr: Addr<A>,
     },
-    Remote(Remote<A>),
+    Remote(Uuid),
 }
 
 impl<A: Actor> Clone for Pid<A> {
@@ -178,11 +178,10 @@ impl<A: Actor> Clone for Pid<A> {
             Pid::Local {
                 id, addr
             } => Pid::Local { id: id.clone(), addr: addr.clone() },
-            Pid::Remote(r) => Pid::Remote(Clone::clone(&r)),
+            Pid::Remote(r) => Pid::Remote(*r),
         }
     }
 }
-
 
 impl<A: Actor> Pid<A> {
     pub fn local_addr(&self) -> Option<Addr<A>> {
@@ -191,70 +190,81 @@ impl<A: Actor> Pid<A> {
             _ => None
         }
     }
+
     pub fn id(&self) -> Uuid {
         match self {
             Pid::Local { id, .. } => id.clone(),
-            Pid::Remote(r) => r.id.clone()
+            Pid::Remote(id) => id.clone()
         }
     }
-}
 
-pub struct Remote<A: Actor> {
-    id: Uuid,
-    _p: PhantomData<A>,
-}
-
-impl<A: Actor> Clone for Remote<A> {
-    fn clone(&self) -> Self {
-        Remote {
-            id: self.id.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<A: Actor> Remote<A> {
-    fn id(&self) -> &Uuid {
-        &self.id
-    }
-
-    fn send<M>(&self, m: M) -> RemoteRequest<M>
-    where M: Message + prost::Message,
+    pub fn send<M>(&self, m: M) -> PidRequest<A, M>
+    where A: Handler<M>,
+          A::Context: ToEnvelope<A, M>,
+          M: Message + prost::Message,
           M::Result: prost::Message,
-          A: Handler<M>
-    {
-        let dispatch = Dispatch::make_raw_request(&m, self.id.clone());
 
-        RemoteRequest {
-            rec: ProcessRegistry::from_registry().send(dispatch),
-            _p: PhantomData,
+    {
+        match self {
+            Pid::Local { addr, .. } => PidRequest::Local(addr.send(m)),
+            Pid::Remote(id) => {
+                let dispatch = Dispatch::make_raw_request(&m, id.clone());
+                PidRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
+            }
         }
     }
-    // TODO: Add do_send
+
+    pub fn do_send<M>(&self, m: M)
+    where A: Handler<M>,
+          A::Context: ToEnvelope<A, M>,
+          M: Message + prost::Message,
+          M::Result: prost::Message,
+    {
+        match self {
+            Self::Local { addr, .. } => addr.do_send(m),
+            Self::Remote(id) => {
+                let dispatch = Dispatch::make_raw_announce(&m, id.clone());
+                ProcessRegistry::from_registry().do_send(dispatch)
+            }
+        }
+    }
 }
 
 /// Request to send message to remote process
-///
 /// This can only be used to send addressed messages
-pub struct RemoteRequest<M: Message> {
-    rec: Request<ProcessRegistry, Dispatch>,
-    _p: PhantomData<M>,
+pub enum PidRequest<A, M>
+where A: Actor + Handler<M>,
+      A::Context: ToEnvelope<A, M>,
+      M: Message
+
+{
+    Local(Request<A, M>),
+    Remote(Request<ProcessRegistry, Dispatch>),
 }
 
 
-impl<M: Message> Future for RemoteRequest<M>
-where M: ProstMessage + Unpin,
+impl<A: Actor, M: Message> Future for PidRequest<A, M>
+where A: Actor + Handler<M>,
+      A::Context: ToEnvelope<A, M>,
+      M: Message + ProstMessage + Unpin,
       M::Result: ProstMessage + Default
 {
     type Output = Result<M::Result, DispatchError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match futures::ready!(self.get_mut().rec.poll_unpin(cx)) {
-            Ok(Ok(res)) => {
-                Poll::Ready(<M::Result as prost::Message>::decode(res).map_err(|e| DispatchError::Format))
+        match self.get_mut() {
+            PidRequest::Local(r) => {
+                r.poll_unpin(cx).map_err(|e| DispatchError::DispatchLocal)
             }
-            Ok(Err(err)) => Poll::Ready(Err(err)),
-            Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
+            PidRequest::Remote(r) => {
+                match futures::ready!(r.poll_unpin(cx)) {
+                    Ok(Ok(res)) => {
+                        Poll::Ready(<M::Result as prost::Message>::decode(res).map_err(|e| DispatchError::Format))
+                    }
+                    Ok(Err(err)) => Poll::Ready(Err(err)),
+                    Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
+                }
+            }
         }
     }
 }

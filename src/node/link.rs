@@ -102,6 +102,7 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
             }));
         }
         if let Some(mut req) = msg.request {
+            log::trace("Received request");
             let procid: Uuid = req.procid.parse().unwrap();
             let dispatch = Dispatch {
                 id: procid,
@@ -171,7 +172,7 @@ impl Handler<Dispatch> for NodeLink {
             };
 
             self.stream.write(encode(&nm));
-            return actix::Response::fut(Box::pin(async move {
+            actix::Response::fut(Box::pin(async move {
                 match tokio::time::timeout(Duration::from_secs(10), rx).await {
                     Ok(Ok(r)) => {
                         r
@@ -185,15 +186,15 @@ impl Handler<Dispatch> for NodeLink {
                         Err(DispatchError::TimeoutRemote)
                     }
                 }
-            }));
+            }))
         } else {
             let nm = NodeProtoMessage {
                 request: Some(req),
                 ..Default::default()
             };
             self.stream.write(encode(&nm));
-            // TODO: reply should be option here
-            return actix::Response::reply(Ok(Bytes::new()));
+            // TODO: reply should be an option here
+            actix::Response::reply(Ok(Bytes::new()))
         }
     }
 }
