@@ -1,5 +1,5 @@
 use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler};
-use crate::node::{Meta, encode, decode, NodeMessage, Response, Request, PingPong, NodeConfig, GetConfig};
+use crate::node::{Meta, encode, decode, NodeProtoMessage, Response, Request, PingPong, NodeConfig, GetConfig, NodeControl, FromRemote};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
 use bytes::{Bytes, BytesMut};
@@ -17,9 +17,11 @@ use crate::process::DispatchError;
 use std::collections::HashMap;
 use tokio::sync::oneshot::{Sender, channel};
 use actix::clock::Duration;
+use std::net::SocketAddr;
 
 pub struct NodeLink {
-    id: i64,
+    id: Uuid,
+    correlation_counter: i64,
     stream: FramedWrite<Bytes, OwnedWriteHalf, LengthDelimitedCodec>,
     running: HashMap<i64, Sender<Result<Bytes, DispatchError>>>,
 }
@@ -29,13 +31,16 @@ impl Actor for NodeLink {
 }
 
 impl NodeLink {
-    pub async fn new(socket: TcpStream) -> (Uuid, Addr<Self>) {
+    pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
         let codec = tokio_util::codec::LengthDelimitedCodec::builder();
 
         let v = NodeConfig::from_registry().send(GetConfig).await.unwrap();
         let x = Meta { id: v.id.to_string() };
 
+        let peer_addr = socket.peer_addr().unwrap();
+
         let (rx, tx) = socket.into_split();
+
 
         let mut tx = codec.new_write(tx);
         let mut rx = codec.new_read(rx);
@@ -44,6 +49,7 @@ impl NodeLink {
         tx.send(encode(&x)).await.unwrap();
         let other = rx.next().await.unwrap().unwrap();
         let other: Meta = decode(other).unwrap();
+        let id: Uuid = other.id.parse().unwrap();
 
         let tx = tx.into_inner();
 
@@ -53,7 +59,7 @@ impl NodeLink {
             let tx = FramedWrite::new(tx, codec.new_codec(), ctx);
             ctx.run_interval(Duration::from_secs(1), |this: &mut Self, ctx| {
                 log::trace!("Pinging");
-                this.stream.write(encode(&NodeMessage {
+                this.stream.write(encode(&NodeProtoMessage {
                     ping: Some(PingPong {
                         value: "Ping".to_string()
                     }),
@@ -62,12 +68,13 @@ impl NodeLink {
             });
 
             NodeLink {
-                id: 0,
+                id: id.clone(),
+                correlation_counter: 0,
                 stream: tx,
                 running: HashMap::new(),
             }
         });
-        (other.id.parse().unwrap(), this)
+        (id, peer_addr, this)
     }
 }
 
@@ -75,37 +82,46 @@ impl WriteHandler<std::io::Error> for NodeLink {}
 
 impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
     fn handle(&mut self, item: Result<BytesMut, Error>, ctx: &mut Context<Self>) {
-        let msg: NodeMessage = decode(item.unwrap()).unwrap();
+        let msg: NodeProtoMessage = decode(item.unwrap()).unwrap();
         if let Some(ping) = msg.ping {
             log::trace!("Got pinged: {:?}", ping.value);
-            self.stream.write(encode(&NodeMessage {
+            self.stream.write(encode(&NodeProtoMessage {
                 pong: Some(ping),
                 ..Default::default()
             }));
         }
         if let Some(mut req) = msg.request {
             let procid: Uuid = req.procid.parse().unwrap();
-            let procreg = ProcessRegistry::from_registry();
             let dispatch = Dispatch {
                 id: procid,
                 method: req.method,
                 body: Bytes::from(req.body),
+                wait_for_response: req.correlation.is_some(),
             };
-            let correlation = req.correlation.take();
-            let work = wrap_future(procreg.send(dispatch))
-                .map(move |res, this: &mut Self, ctx| {
-                    if let Some(correlation) = correlation {
-                        let msg = NodeMessage {
-                            response: Some(Response {
-                                correlation,
-                                body: res.unwrap().unwrap().to_vec(),
-                            }),
-                            ..Default::default()
-                        };
-                        this.stream.write(encode(&msg));
-                    }
+            if procid.is_nil() && !dispatch.wait_for_response {
+                NodeControl::from_registry().do_send(FromRemote {
+                    node_id: self.id.clone(),
+                    inner: dispatch,
                 });
-            ctx.spawn(work);
+            } else {
+                let procreg = ProcessRegistry::from_registry();
+
+                let correlation = req.correlation.take();
+                let work = wrap_future(procreg.send(dispatch))
+                    .map(move |res, this: &mut Self, ctx| {
+                        if let Some(correlation) = correlation {
+                            let msg = NodeProtoMessage {
+                                response: Some(Response {
+                                    correlation,
+                                    body: res.unwrap().unwrap().to_vec(),
+                                }),
+                                ..Default::default()
+                            };
+                            this.stream.write(encode(&msg));
+                        }
+                    });
+                ctx.spawn(work);
+            }
         }
 
         if let Some(res) = msg.response {
@@ -118,26 +134,75 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
     }
 }
 
+
 impl Handler<Dispatch> for NodeLink {
     type Result = actix::Response<Bytes, DispatchError>;
 
     fn handle(&mut self, msg: Dispatch, ctx: &mut Context<Self>) -> Self::Result {
-        self.id = self.id.wrapping_add(1);
-
-        let (tx, rx) = channel();
-        self.running.insert(self.id, tx);
-
-        let req = NodeMessage {
-            request: Some(Request {
-                correlation: Some(self.id),
-                procid: msg.id.to_string(),
-                method: msg.method,
-                body: msg.body.to_vec(),
-            }),
-            ..Default::default()
+        let mut req = Request {
+            correlation: None,
+            procid: msg.id.to_string(),
+            method: msg.method,
+            body: msg.body.to_vec(),
         };
 
-        self.stream.write(encode(&req));
-        return actix::Response::fut(Box::pin(async move { rx.await.unwrap() }));
+        if msg.wait_for_response {
+            self.correlation_counter = self.correlation_counter.wrapping_add(1);
+
+            let (tx, rx) = channel();
+            self.running.insert(self.correlation_counter, tx);
+
+            req.correlation = Some(self.correlation_counter);
+
+            let nm = NodeProtoMessage {
+                request: Some(req),
+                ..Default::default()
+            };
+
+            self.stream.write(encode(&nm));
+            return actix::Response::fut(Box::pin(async move {
+                match tokio::time::timeout(Duration::from_secs(10), rx).await {
+                    Ok(Ok(r)) => {
+                        r
+                    }
+                    Ok(Err(e)) => {
+                        // closed
+                        Err(DispatchError::MailboxRemote)
+                    }
+                    Err(e) => {
+                        // Timeout
+                        Err(DispatchError::TimeoutRemote)
+                    }
+                }
+            }));
+        } else {
+            let nm = NodeProtoMessage {
+                request: Some(req),
+                ..Default::default()
+            };
+            self.stream.write(encode(&nm));
+            // TODO: reply should be option here
+            return actix::Response::reply(Ok(Bytes::new()));
+        }
     }
 }
+
+/*
+impl Handler<BroadcastChanges> for NodeLink {
+    type Result = ();
+
+    fn handle(&mut self, msg: BroadcastChanges, ctx: &mut Context<Self>) -> Self::Result {
+        let ann = Announce {
+            newprocs: msg.1.into_iter().map(|v| v.to_string()).collect(),
+            delprocs: msg.2.into_iter().map(|v| v.to_string()).collect(),
+            nodes: vec![],
+        };
+        let mut msg = NodeMessage {
+            announce: Some(ann),
+            ..Default::default()
+        };
+        self.stream.write(encode(&msg));
+    }
+}
+
+ */

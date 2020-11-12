@@ -7,7 +7,6 @@ use quote::quote;
 use syn::parse::{Parse, ParseBuffer};
 use syn::Token;
 
-#[derive(Debug)]
 struct TypeList {
     paths: Vec<Type>
 }
@@ -57,11 +56,11 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
         quote! {
             if method.as_str() == core::any::type_name::<#p>() {
 
-                let msg = <#p as quix::derive::ProstMessage>::decode(data).map_err(|_| quix::derive::DispatchError {});
+                let msg = <#p as quix::derive::ProstMessage>::decode(data).map_err(|_| quix::derive::DispatchError::Format);
                 let run = async move {
-                    let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError {})?;
+                    let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
                     let mut buf = quix::derive::BytesMut::new();
-                    quix::derive::ProstMessage::encode(&res, &mut buf).map_err(|_| quix::derive::DispatchError {})?;
+                    quix::derive::ProstMessage::encode(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
                     Ok(buf.freeze())
                 };
                 return Box::pin(run);
@@ -72,14 +71,14 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
     let name = i.ident;
     let tokens = quote! {
         impl quix::derive::ProcessDispatch for #name {
-            fn make_dispatcher(addr: actix::Addr<Self>) -> Box<dyn quix::derive::Dispatcher> {
-                pub struct LocalDispatcher { addr: actix::Addr<#name> }
+            fn make_dispatcher(addr: actix::WeakAddr<Self>) -> Box<dyn quix::derive::Dispatcher> {
+                pub struct LocalDispatcher { addr: actix::WeakAddr<#name> }
                 impl quix::derive::Dispatcher for LocalDispatcher {
                     fn dispatch(&self, method: String, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
                         use quix::derive::ProstMessage;
-                        let addr = self.addr.clone();
+                        let addr = self.addr.upgrade().unwrap().clone();
                         #(#cases)*
-                        return Box::pin(async move { Err(quix::derive::DispatchError {})})
+                        return Box::pin(async move { Err(quix::derive::DispatchError::DispatchRemote)})
                     }
                 }
                 return Box::new(LocalDispatcher { addr });

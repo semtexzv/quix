@@ -1,6 +1,6 @@
 use actix::*;
 use quix::{self, *};
-use quix::process::registry::{ProcessRegistry, Register};
+use quix::process::registry::{ProcessRegistry, RegisterProcess};
 
 
 #[derive(prost::Message)]
@@ -30,11 +30,9 @@ impl Handler<M> for Act {
 
 #[test]
 fn test_register_process() {
-
-
     actix::run(async move {
         let procs = ProcessRegistry::from_registry();
         let a = Process::start(Act {});
-        let a = procs.send(Register::new(a.clone())).await.unwrap();
+        let a = procs.send(RegisterProcess::new(a.clone())).await.unwrap();
     }).unwrap();
 }

@@ -1,28 +1,31 @@
 [workspace]
 members = [".", "derive"]
+
 [package]
 name = "quix"
-version = "0.1.0"
-authors = ["Michal Hornicky <mhornick@redhat.com>"]
+version = "0.0.1"
+description = "Distribution layer for actix"
+authors = ["Michal Hornicky <semtexzv@gmail.com>"]
 edition = "2018"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-derive = { path = "./derive" }
+derive = { path = "./derive", version = "0.0.1", package = "quix-derive" }
 
-uuid = { version = "*", features = ["v4"] }
-log = "*"
-env_logger = "*"
+uuid = { version = "0.8", features = ["v4"] }
+log = "0.4.11"
+env_logger = "0.8.1"
 prost = { version = "0.6.1", features = [] }
-bytes = "*"
-futures = "*"
+bytes = "0.5.6"
+futures = "0.3.8"
 
 actix = "0.10"
 actix-rt = "1.1.1"
 actix-codec = "0.3.0"
 
-serde = "*"
-tokio = { version = "*" }
-tokio-util = { version = "*", features = ["codec"] }
-json = { package = "serde_json", version = "*" }
+serde = "1.0.117"
+tokio = { version = "0.2" }
+tokio-util = { version = "=0.3.1", features = ["codec"] }
+json = { package = "serde_json", version = "1" }
