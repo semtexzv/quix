@@ -40,22 +40,9 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
     } else {
         panic!("Missing paths")
     };
-    /*
-    if $method.as_str() == type_name::<$tys>() {
-            let msg = <$tys>::decode($data).map_err(|_| DispatchError {});
-            return Box::pin(async move {
-                let res = $addr.send(msg?).await.map_err(|_| DispatchError {})?;
-                let mut buf = BytesMut::new();
-                prost::Message::encode(&res, &mut buf).map_err(|_| DispatchError {})?;
-                Ok(buf.freeze())
-            });
-        }
-     */
-
     let cases = paths.into_iter().map(|p| {
         quote! {
             if method.as_str() == core::any::type_name::<#p>() {
-
                 let msg = <#p as quix::derive::ProstMessage>::decode(data).map_err(|_| quix::derive::DispatchError::Format);
                 let run = async move {
                     let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;

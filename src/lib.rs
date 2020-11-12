@@ -22,6 +22,8 @@ pub mod derive {
 pub mod process;
 pub mod node;
 pub mod util;
+pub mod suspend;
+pub mod global;
 
 pub use _der::ProcessDispatch;
 

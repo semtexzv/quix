@@ -1,5 +1,6 @@
-use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler};
-use crate::node::{Meta, encode, decode, NodeProtoMessage, Response, Request, PingPong, NodeConfig, GetConfig, NodeControl, FromRemote};
+use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler, ActorContext};
+use crate::node::proto::{Meta, NodeProtoMessage, Request, Response, PingPong};
+use crate::node::{encode, decode, NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
 use bytes::{Bytes, BytesMut};
@@ -18,6 +19,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot::{Sender, channel};
 use actix::clock::Duration;
 use std::net::SocketAddr;
+use crate::global::{Global, Get};
 
 pub struct NodeLink {
     id: Uuid,
@@ -34,7 +36,7 @@ impl NodeLink {
     pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
         let codec = tokio_util::codec::LengthDelimitedCodec::builder();
 
-        let v = NodeConfig::from_registry().send(GetConfig).await.unwrap();
+        let v = Global::<NodeConfig>::from_registry().send(Get::default()).await.unwrap().unwrap();
         let x = Meta { id: v.id.to_string() };
 
         let peer_addr = socket.peer_addr().unwrap();
@@ -82,7 +84,16 @@ impl WriteHandler<std::io::Error> for NodeLink {}
 
 impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
     fn handle(&mut self, item: Result<BytesMut, Error>, ctx: &mut Context<Self>) {
-        let msg: NodeProtoMessage = decode(item.unwrap()).unwrap();
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                ctx.stop();
+                NodeControl::from_registry().do_send(NodeUpdate::Disconnected(self.id));
+                return;
+            }
+        };
+
+        let msg: NodeProtoMessage = decode(item).unwrap();
         if let Some(ping) = msg.ping {
             log::trace!("Got pinged: {:?}", ping.value);
             self.stream.write(encode(&NodeProtoMessage {
@@ -99,7 +110,7 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
                 wait_for_response: req.correlation.is_some(),
             };
             if procid.is_nil() && !dispatch.wait_for_response {
-                NodeControl::from_registry().do_send(FromRemote {
+                NodeControl::from_registry().do_send(RecvFromNode {
                     node_id: self.id.clone(),
                     inner: dispatch,
                 });
@@ -186,23 +197,3 @@ impl Handler<Dispatch> for NodeLink {
         }
     }
 }
-
-/*
-impl Handler<BroadcastChanges> for NodeLink {
-    type Result = ();
-
-    fn handle(&mut self, msg: BroadcastChanges, ctx: &mut Context<Self>) -> Self::Result {
-        let ann = Announce {
-            newprocs: msg.1.into_iter().map(|v| v.to_string()).collect(),
-            delprocs: msg.2.into_iter().map(|v| v.to_string()).collect(),
-            nodes: vec![],
-        };
-        let mut msg = NodeMessage {
-            announce: Some(ann),
-            ..Default::default()
-        };
-        self.stream.write(encode(&msg));
-    }
-}
-
- */

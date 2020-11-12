@@ -9,102 +9,20 @@ use actix::{Actor, Context, Addr, Handler, ActorFuture, AsyncContext, Message, S
 use actix::fut::{wrap_future, wrap_stream};
 
 mod link;
+mod proto;
 
 use crate::node::link::NodeLink;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use futures::{TryStreamExt, Future};
-use crate::process::{DispatchError, Dispatcher};
-use crate::process::registry::{Dispatch};
 use futures::future::BoxFuture;
 use std::pin::Pin;
+
 use crate::util::RegisterRecipient;
+use crate::global::{Get, Global};
+use crate::process::{DispatchError, Dispatcher};
+use crate::process::registry::{Dispatch};
 
-/// Messages exchanged between individual nodes on lowest protocol level
-#[derive(prost::Message)]
-pub struct NodeProtoMessage {
-    #[prost(message, optional, tag = "1")]
-    ping: Option<PingPong>,
-
-    #[prost(message, optional, tag = "2")]
-    pong: Option<PingPong>,
-
-    #[prost(message, optional, tag = "3")]
-    meta: Option<Meta>,
-
-    #[prost(message, optional, tag = "4")]
-    request: Option<Request>,
-
-    #[prost(message, optional, tag = "5")]
-    response: Option<Response>,
-
-    /*
-    #[prost(message, optional, tag = "6")]
-    announce: Option<Announce>,
-     */
-}
-
-#[derive(prost::Message)]
-pub struct PingPong {
-    #[prost(string, tag = "1")]
-    value: String
-}
-
-#[derive(prost::Message)]
-pub struct Meta {
-    #[prost(string, tag = "1")]
-    id: String
-}
-
-#[derive(prost::Message)]
-pub struct Request {
-    #[prost(string, required, tag = "1")]
-    procid: String,
-
-    #[prost(string, required, tag = "2")]
-    method: String,
-
-    #[prost(int64, optional, tag = "3")]
-    correlation: Option<i64>,
-
-    #[prost(bytes, required, tag = "4")]
-    body: Vec<u8>,
-}
-
-#[derive(prost::Message)]
-pub struct Response {
-    #[prost(int64, required, tag = "1")]
-    correlation: i64,
-
-    #[prost(bytes, required, tag = "2")]
-    body: Vec<u8>,
-}
-
-#[derive(prost::Message)]
-pub struct NodeInfo {
-    #[prost(string, required, tag = "1")]
-    id: String,
-
-    #[prost(string, required, tag = "2")]
-    socket_addr: String,
-}
-
-/*
-#[derive(prost::Message)]
-pub struct Announce {
-    #[prost(string, repeated, tag = "1")]
-    newprocs: Vec<String>,
-
-    #[prost(string, repeated, tag = "2")]
-    delprocs: Vec<String>,
-
-    #[prost(message, repeated, tag = "3")]
-    nodes: Vec<NodeInfo>,
-
-    #[prost(map = "string, string", required, tag = "4")]
-    handlers: HashMap<String, String>,
-}
- */
 
 pub fn encode<M: prost::Message>(m: &M) -> Bytes {
     let mut buf = BytesMut::new();
@@ -116,49 +34,18 @@ pub fn decode<B: Buf, M: prost::Message + Default>(buf: B) -> Result<M, prost::D
     prost::Message::decode(buf)
 }
 
-pub struct GetConfig;
-
-impl Message for GetConfig {
-    type Result = NodeConfig;
-}
-
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
     pub id: Uuid,
     pub listen: SocketAddr,
 }
 
-impl Message for NodeConfig {
-    type Result = ();
-}
-
-impl Supervised for NodeConfig {}
-
-impl SystemService for NodeConfig {}
-
-impl Actor for NodeConfig {
-    type Context = Context<Self>;
-}
-
 impl Default for NodeConfig {
     fn default() -> Self {
-        Self { listen: "127.0.0.1:9000".parse().unwrap(), id: Uuid::new_v4() }
-    }
-}
-
-impl Handler<NodeConfig> for NodeConfig {
-    type Result = ();
-
-    fn handle(&mut self, msg: NodeConfig, ctx: &mut Self::Context) -> Self::Result {
-        *self = msg;
-    }
-}
-
-impl Handler<GetConfig> for NodeConfig {
-    type Result = MessageResult<GetConfig>;
-
-    fn handle(&mut self, msg: GetConfig, ctx: &mut Self::Context) -> Self::Result {
-        return MessageResult(self.clone());
+        NodeConfig {
+            id: Uuid::new_v4(),
+            listen: ([127, 0, 0, 1], 9090).into(),
+        }
     }
 }
 
@@ -177,9 +64,10 @@ impl SystemService for NodeControl {}
 
 impl Supervised for NodeControl {
     fn restarting(&mut self, ctx: &mut Self::Context) {
-        let cfg = NodeConfig::from_registry().send(GetConfig);
+        let cfg = Global::<NodeConfig>::from_registry().send(Get::default());
         let set_cfg = wrap_future(cfg)
             .then(|cfg, this: &mut Self, ctx| {
+                let cfg = cfg.unwrap();
                 log::warn!("Starting node listener on: {:?}", cfg);
                 let cfg = cfg.unwrap();
 
@@ -214,7 +102,9 @@ impl Actor for NodeControl {
 
 impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
     fn handle(&mut self, item: std::io::Result<TcpStream>, ctx: &mut Context<Self>) {
-        let link = wrap_future(NodeLink::new(item.unwrap()));
+        let item = item.expect("Fatal error in NodeControl");
+
+        let link = wrap_future(NodeLink::new(item));
         let fut = link
             .map(|(id, peer, link), this: &mut Self, ctx| {
                 log::info!("Connected to: {:?}", id);
@@ -227,13 +117,26 @@ impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NodeUpdate {
     Connected(Uuid),
     Disconnected(Uuid),
 }
 
 impl Message for NodeUpdate { type Result = (); }
+
+impl Handler<NodeUpdate> for NodeControl {
+    type Result = ();
+
+    fn handle(&mut self, msg: NodeUpdate, ctx: &mut Self::Context) -> Self::Result {
+        match msg {
+            NodeUpdate::Disconnected(id) => {
+                self.listeners.retain(|_, l| l.do_send(msg.clone()).is_ok());
+            }
+            _ => panic!("Should receive connected event yet")
+        }
+    }
+}
 
 impl Handler<RegisterRecipient<NodeUpdate>> for NodeControl {
     type Result = Result<Uuid, std::convert::Infallible>;
@@ -312,11 +215,11 @@ impl Handler<Broadcast> for NodeControl {
     }
 }
 
-impl Handler<FromRemote<Dispatch>> for NodeControl {
+impl Handler<RecvFromNode<Dispatch>> for NodeControl {
     type Result = ();
 
-    fn handle(&mut self, msg: FromRemote<Dispatch>, ctx: &mut Self::Context) -> Self::Result {
-        log::info!("NodeControl dispatching");
+    fn handle(&mut self, msg: RecvFromNode<Dispatch>, ctx: &mut Self::Context) -> Self::Result {
+        log::info!("NodeControl dispatching unadressed message");
         match self.dispatch.get_mut(msg.inner.method.as_str()) {
             Some(m) => {
                 let fut = (m)(msg.node_id, msg.inner.body);
@@ -330,12 +233,12 @@ impl Handler<FromRemote<Dispatch>> for NodeControl {
 }
 
 #[derive(Debug)]
-pub struct FromRemote<M> {
+pub struct RecvFromNode<M> {
     pub node_id: Uuid,
     pub inner: M,
 }
 
-impl<M> Message for FromRemote<M> {
+impl<M> Message for RecvFromNode<M> {
     type Result = ();
 }
 
@@ -349,7 +252,7 @@ pub struct RegisterSystemHandler {
 
 impl RegisterSystemHandler {
     /// Create new registration request for node-wide handler
-    pub fn new<M>(rec: Recipient<FromRemote<M>>) -> Self
+    pub fn new<M>(rec: Recipient<RecvFromNode<M>>) -> Self
     where M: actix::Message<Result=()> + prost::Message + Send + Default + 'static,
     {
         let handler = move |node_id, data| -> Pin<Box<dyn Future<Output=_>>> {
@@ -357,7 +260,7 @@ impl RegisterSystemHandler {
             let rec = rec.clone();
             Box::pin(async move {
                 let msg = M::decode(data).map_err(|_| DispatchError::Format)?;
-                let msg = FromRemote {
+                let msg = RecvFromNode {
                     node_id,
                     inner: msg,
                 };

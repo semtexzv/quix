@@ -3,6 +3,7 @@ use actix::{SystemService, Message, Actor, Handler, Running};
 use std::time::Duration;
 use quix::Process;
 use std::thread::JoinHandle;
+use quix::global::{Global, Set};
 
 
 #[derive(prost::Message)]
@@ -41,10 +42,12 @@ fn make_node(i: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
         actix::run(async move {
             tokio::time::delay_for(Duration::from_millis((i * 100) as u64)).await;
-            NodeConfig::from_registry().send(NodeConfig {
+            let config = NodeConfig {
                 listen: format!("127.0.0.1:900{}", i).parse().unwrap(),
                 ..Default::default()
-            }).await.unwrap();
+            };
+
+            Global::<NodeConfig>::from_registry().send(Set(config)).await.unwrap();
 
             if i > 0 {
                 let link = NodeControl::from_registry().send(Connect {

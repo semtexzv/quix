@@ -3,7 +3,7 @@ use uuid::Uuid;
 use actix::{Recipient, Actor, Context, Supervised, SystemService, Handler, Message, Response, AsyncContext, ContextFutureSpawner};
 use crate::process::{Dispatcher, ProcessDispatch, Pid, Process, DispatchError};
 use bytes::Bytes;
-use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, FromRemote, Broadcast, encode, NodeUpdate};
+use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, Broadcast, encode, NodeUpdate};
 use futures::FutureExt;
 use actix::clock::Duration;
 use actix::fut::wrap_future;
@@ -76,10 +76,10 @@ impl Supervised for ProcessRegistry {
     }
 }
 
-impl Handler<FromRemote<ProcessList>> for ProcessRegistry {
+impl Handler<RecvFromNode<ProcessList>> for ProcessRegistry {
     type Result = ();
 
-    fn handle(&mut self, msg: FromRemote<ProcessList>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: RecvFromNode<ProcessList>, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 
