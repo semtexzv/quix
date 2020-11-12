@@ -193,7 +193,7 @@ impl Handler<Dispatch> for NodeLink {
                 ..Default::default()
             };
             self.stream.write(encode(&nm));
-            // TODO: reply should be an option here
+            // TODO: reply should be an  option here
             actix::Response::reply(Ok(Bytes::new()))
         }
     }
