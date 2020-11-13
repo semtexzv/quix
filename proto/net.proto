@@ -1,0 +1,34 @@
+syntax = "proto2";
+
+package quix.net;
+
+message Net {
+  optional Meta meta = 1;
+  optional PingPong ping = 2;
+  optional PingPong pong = 3;
+  optional Request request = 4;
+  optional Response response = 5;
+}
+
+message PingPong {
+
+}
+
+message Meta {
+  required bytes nodeid = 1;
+}
+
+message Request {
+
+  optional bytes procid = 1;
+  optional int64 correlation = 2;
+
+  required string method = 3;
+  required bytes body = 4;
+
+}
+
+message Response {
+  optional int64 correlation = 1;
+  required bytes body = 2;
+}

@@ -11,12 +11,13 @@ use bytes::Bytes;
 use futures::future::BoxFuture;
 use actix::prelude::Request;
 use crate::process::registry::{Dispatch, ProcessRegistry, RegisterProcess, UnregisterProcess};
-use crate::node::{NodeControl, SendToNode, encode};
+use crate::node::{NodeControl, SendToNode};
 use futures::{FutureExt, TryFutureExt};
 use tokio::macros::support::Pin;
 use futures::task::Poll;
 use std::task;
 use crate::derive::ProstMessage;
+use crate::util::Wired;
 
 pub mod registry;
 
@@ -201,8 +202,8 @@ impl<A: Actor> Pid<A> {
     pub fn send<M>(&self, m: M) -> PidRequest<A, M>
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + prost::Message,
-          M::Result: prost::Message,
+          M: Message + Wired + Send,
+          M::Result: Wired + Send,
 
     {
         match self {
@@ -214,11 +215,11 @@ impl<A: Actor> Pid<A> {
         }
     }
 
-    pub fn do_send<M>(&self, m: M)
+    pub fn do_send<M>(& self, m: M)
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + prost::Message,
-          M::Result: prost::Message,
+          M: Message + Wired + Send,
+          M::Result: Wired + Send,
     {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),

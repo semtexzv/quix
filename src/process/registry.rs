@@ -3,13 +3,13 @@ use uuid::Uuid;
 use actix::{Recipient, Actor, Context, Supervised, SystemService, Handler, Message, Response, AsyncContext, ContextFutureSpawner};
 use crate::process::{Dispatcher, ProcessDispatch, Pid, Process, DispatchError};
 use bytes::Bytes;
-use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, Broadcast, encode, NodeUpdate};
+use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, Broadcast, NodeUpdate};
 use futures::FutureExt;
 use actix::clock::Duration;
 use actix::fut::wrap_future;
 use std::str::FromStr;
 use crate::derive::ProstMessage;
-use crate::util::RegisterRecipient;
+use crate::util::{RegisterRecipient, Wired};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -180,11 +180,11 @@ impl Dispatch {
     /// Create a new dispatch from raw message, this message doesn't have to be an
     /// actual message, but rather any type that implements [prost::Message]
     pub fn make_raw_announce<M>(msg: &M, to: Uuid) -> Self
-    where M: ProstMessage
+    where M: Wired
     {
         Dispatch {
             id: to,
-            body: encode(msg),
+            body: Wired::to_buf(msg).unwrap(),
             method: core::any::type_name::<M>().to_string(),
             wait_for_response: false,
         }
@@ -192,11 +192,11 @@ impl Dispatch {
     /// Create a new dispatch from raw message, this message doesn't have to be an
     /// actual message, but rather any type that implements [prost::Message]
     pub fn make_raw_request<M>(msg: &M, to: Uuid) -> Self
-    where M: ProstMessage
+    where M: Wired
     {
         Dispatch {
             id: to,
-            body: encode(msg),
+            body: Wired::to_buf(msg).unwrap(),
             method: core::any::type_name::<M>().to_string(),
             wait_for_response: true,
         }

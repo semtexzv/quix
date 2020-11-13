@@ -1,6 +1,6 @@
 use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler, ActorContext};
 use crate::node::proto::{Meta, NodeProtoMessage, Request, Response, PingPong};
-use crate::node::{encode, decode, NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
+use crate::node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
 use bytes::{Bytes, BytesMut};
@@ -20,6 +20,7 @@ use tokio::sync::oneshot::{Sender, channel};
 use actix::clock::Duration;
 use std::net::SocketAddr;
 use crate::global::{Global, Get};
+use crate::util::Wired;
 
 pub struct NodeLink {
     id: Uuid,
@@ -37,7 +38,7 @@ impl NodeLink {
         let codec = tokio_util::codec::LengthDelimitedCodec::builder();
 
         let v = Global::<NodeConfig>::from_registry().send(Get::default()).await.unwrap().unwrap();
-        let x = Meta { id: v.id.to_string() };
+        let meta = Meta { id: v.id.to_string() };
 
         let peer_addr = socket.peer_addr().unwrap();
 
@@ -48,9 +49,10 @@ impl NodeLink {
         let mut rx = codec.new_read(rx);
 
 
-        tx.send(encode(&x)).await.unwrap();
+        let meta = Wired::to_buf(&meta).unwrap();
+        tx.send(meta).await.unwrap();
         let other = rx.next().await.unwrap().unwrap();
-        let other: Meta = decode(other).unwrap();
+        let other: Meta = Wired::read(other).unwrap();
         let id: Uuid = other.id.parse().unwrap();
 
         let tx = tx.into_inner();
@@ -61,12 +63,12 @@ impl NodeLink {
             let tx = FramedWrite::new(tx, codec.new_codec(), ctx);
             ctx.run_interval(Duration::from_secs(1), |this: &mut Self, ctx| {
                 log::trace!("Pinging");
-                this.stream.write(encode(&NodeProtoMessage {
+                this.stream.write(NodeProtoMessage {
                     ping: Some(PingPong {
                         value: "Ping".to_string()
                     }),
                     ..Default::default()
-                }));
+                }.to_buf().unwrap());
             });
 
             NodeLink {
@@ -93,16 +95,16 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
             }
         };
 
-        let msg: NodeProtoMessage = decode(item).unwrap();
+        let msg: NodeProtoMessage = Wired::read(item).unwrap();
         if let Some(ping) = msg.ping {
             log::trace!("Got pinged: {:?}", ping.value);
-            self.stream.write(encode(&NodeProtoMessage {
+            self.stream.write(NodeProtoMessage {
                 pong: Some(ping),
                 ..Default::default()
-            }));
+            }.to_buf().unwrap());
         }
         if let Some(mut req) = msg.request {
-            log::trace("Received request");
+            log::trace!("Received request");
             let procid: Uuid = req.procid.parse().unwrap();
             let dispatch = Dispatch {
                 id: procid,
@@ -129,7 +131,7 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
                                 }),
                                 ..Default::default()
                             };
-                            this.stream.write(encode(&msg));
+                            this.stream.write(msg.to_buf().unwrap());
                         }
                     });
                 ctx.spawn(work);
@@ -171,7 +173,7 @@ impl Handler<Dispatch> for NodeLink {
                 ..Default::default()
             };
 
-            self.stream.write(encode(&nm));
+            self.stream.write(nm.to_buf().unwrap());
             actix::Response::fut(Box::pin(async move {
                 match tokio::time::timeout(Duration::from_secs(10), rx).await {
                     Ok(Ok(r)) => {
@@ -192,7 +194,7 @@ impl Handler<Dispatch> for NodeLink {
                 request: Some(req),
                 ..Default::default()
             };
-            self.stream.write(encode(&nm));
+            self.stream.write(nm.to_buf().unwrap());
             // TODO: reply should be an  option here
             actix::Response::reply(Ok(Bytes::new()))
         }

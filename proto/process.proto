@@ -1,0 +1,12 @@
+syntax = "proto3";
+package quix.process;
+
+
+message Pid {
+  bytes id = 1;
+}
+
+message ProcessList {
+  repeated bytes new = 2;
+  repeated bytes del = 3;
+}

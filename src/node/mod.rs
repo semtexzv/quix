@@ -18,12 +18,12 @@ use futures::{TryStreamExt, Future};
 use futures::future::BoxFuture;
 use std::pin::Pin;
 
-use crate::util::RegisterRecipient;
+use crate::util::{RegisterRecipient, Wired};
 use crate::global::{Get, Global};
 use crate::process::{DispatchError, Dispatcher};
 use crate::process::registry::{Dispatch};
 
-
+/*
 pub fn encode<M: prost::Message>(m: &M) -> Bytes {
     let mut buf = BytesMut::new();
     prost::Message::encode(m, &mut buf).unwrap();
@@ -33,6 +33,7 @@ pub fn encode<M: prost::Message>(m: &M) -> Bytes {
 pub fn decode<B: Buf, M: prost::Message + Default>(buf: B) -> Result<M, prost::DecodeError> {
     prost::Message::decode(buf)
 }
+*/
 
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
@@ -253,19 +254,19 @@ pub struct RegisterSystemHandler {
 impl RegisterSystemHandler {
     /// Create new registration request for node-wide handler
     pub fn new<M>(rec: Recipient<RecvFromNode<M>>) -> Self
-    where M: actix::Message<Result=()> + prost::Message + Send + Default + 'static,
+    where M: actix::Message<Result=()> + Wired + Send + 'static,
     {
         let handler = move |node_id, data| -> Pin<Box<dyn Future<Output=_>>> {
             log::info!("Running global message handler");
             let rec = rec.clone();
             Box::pin(async move {
-                let msg = M::decode(data).map_err(|_| DispatchError::Format)?;
+                let msg = M::read(data).map_err(|_| DispatchError::Format)?;
                 let msg = RecvFromNode {
                     node_id,
                     inner: msg,
                 };
                 let res = rec.send(msg).await.map_err(|_| DispatchError::Format)?;
-                Ok(encode(&res))
+                Ok(Bytes::new())
             })
         };
 

@@ -43,38 +43,3 @@ impl<T: Unpin + Send + 'static> Handler<Set<T>> for Global<T> {
         self.0 = msg.0
     }
 }
-
-/*
-impl Message for NodeConfig {
-    type Result = ();
-}
-
-impl Supervised for NodeConfig {}
-
-impl SystemService for NodeConfig {}
-
-impl Actor for NodeConfig {
-    type Context = Context<Self>;
-}
-
-impl Default for NodeConfig {
-    fn default() -> Self {
-        Self { listen: "127.0.0.1:9000".parse().unwrap(), id: Uuid::new_v4() }
-    }
-}
-
-impl Handler<NodeConfig> for NodeConfig {
-    type Result = ();
-
-    fn handle(&mut self, msg: NodeConfig, ctx: &mut Self::Context) -> Self::Result {
-        *self = msg;
-    }
-}
-
-impl Handler<GetConfig> for NodeConfig {
-    type Result = MessageResult<GetConfig>;
-
-    fn handle(&mut self, msg: GetConfig, ctx: &mut Self::Context) -> Self::Result {
-        return MessageResult(self.clone());
-    }
-}*/
