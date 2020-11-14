@@ -3,9 +3,9 @@ use crate::node::proto::{Meta, Net, Request, Response, PingPong};
 use crate::node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
-use bytes::{Bytes, BytesMut};
+use bytes::{Bytes, BytesMut, BufMut, Buf};
 
-use tokio_util::codec::{LengthDelimitedCodec};
+use tokio_util::codec::{LengthDelimitedCodec, Encoder, Decoder};
 use tokio::net::TcpStream;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::io::Error;
@@ -25,7 +25,7 @@ use crate::util::{Wired, uuid};
 pub struct NodeLink {
     id: Uuid,
     correlation_counter: i64,
-    stream: FramedWrite<Bytes, OwnedWriteHalf, LengthDelimitedCodec>,
+    stream: FramedWrite<Net, OwnedWriteHalf, NetCodec>,
     running: HashMap<i64, Sender<Result<Bytes, DispatchError>>>,
 }
 
@@ -33,10 +33,47 @@ impl Actor for NodeLink {
     type Context = Context<Self>;
 }
 
+use std::io;
+
+#[derive(Debug, Copy, Clone)]
+pub struct NetCodec;
+
+impl tokio_util::codec::Encoder<Net> for NetCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, item: Net, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let len = prost::Message::encoded_len(&item);
+        dst.put_u32(len as _);
+
+        prost::Message::encode(&item, dst)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+    }
+}
+
+impl tokio_util::codec::Decoder for NetCodec {
+    type Item = Net;
+    type Error = io::Error;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < 4 {
+            return Ok(None);
+        }
+        let len = u32::from_be_bytes([src[0], src[1], src[2], src[3]]) as usize;
+        if src.len() < len+4 {
+            return Ok(None)
+        }
+        let len = src.get_u32() as usize;
+        let msg = src.split_to(len);
+
+        prost::Message::decode(msg)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            .map(Some)
+    }
+}
+
 impl NodeLink {
     pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
-        let mut codec = tokio_util::codec::LengthDelimitedCodec::builder();
-        codec.length_field_length(4);
+        let codec = NetCodec;
 
         let v = Global::<NodeConfig>::from_registry().send(Get::default()).await.unwrap().unwrap();
         let meta = Meta { id: v.id.as_bytes().to_vec() };
@@ -45,15 +82,12 @@ impl NodeLink {
 
         let (rx, tx) = socket.into_split();
 
+        let mut tx = tokio_util::codec::FramedWrite::new(tx, codec);
+        let mut rx = tokio_util::codec::FramedRead::new(rx, codec);
 
-        let mut tx = codec.new_write(tx);
-        let mut rx = codec.new_read(rx);
+        tx.send(Net { meta: Some(meta), ..Default::default() }).await.unwrap();
 
-
-        let meta = Wired::to_buf(&meta).unwrap();
-        tx.send(meta).await.unwrap();
-        let other = rx.next().await.unwrap().unwrap();
-        let other: Meta = Wired::read(other).unwrap();
+        let other = rx.next().await.unwrap().unwrap().meta.unwrap();
         let id: Uuid = uuid(other.id.as_slice());
 
         let tx = tx.into_inner();
@@ -61,7 +95,7 @@ impl NodeLink {
         let this = Actor::create(|ctx| {
             ctx.add_stream(rx);
 
-            let tx = FramedWrite::new(tx, codec.new_codec(), ctx);
+            let tx = FramedWrite::new(tx, NetCodec, ctx);
             ctx.run_interval(Duration::from_secs(1), |this: &mut Self, ctx| {
                 log::trace!("Pinging");
                 this.stream.write(Net {
@@ -69,7 +103,7 @@ impl NodeLink {
                         value: "Ping".to_string()
                     }),
                     ..Default::default()
-                }.to_buf().unwrap());
+                });
             });
 
             NodeLink {
@@ -85,24 +119,25 @@ impl NodeLink {
 
 impl WriteHandler<std::io::Error> for NodeLink {}
 
-impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
-    fn handle(&mut self, item: Result<BytesMut, Error>, ctx: &mut Context<Self>) {
-        let item = match item {
+impl StreamHandler<Result<Net, std::io::Error>> for NodeLink {
+    fn handle(&mut self, item: Result<Net, Error>, ctx: &mut Context<Self>) {
+        let msg = match item {
             Ok(item) => item,
             Err(error) => {
+                log::error!("Error occured, disconnecting");
+                panic!("Invalid data {:?}", error);
                 ctx.stop();
                 NodeControl::from_registry().do_send(NodeUpdate::Disconnected(self.id));
                 return;
             }
         };
 
-        let msg: Net = Wired::read(item).unwrap();
         if let Some(ping) = msg.ping {
             log::trace!("Got pinged: {:?}", ping.value);
             self.stream.write(Net {
                 pong: Some(ping),
                 ..Default::default()
-            }.to_buf().unwrap());
+            });
         }
         if let Some(mut req) = msg.request {
             log::trace!("Received request");
@@ -132,7 +167,7 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
                                 }),
                                 ..Default::default()
                             };
-                            this.stream.write(msg.to_buf().unwrap());
+                            this.stream.write(msg);
                         }
                     });
                 ctx.spawn(work);
@@ -169,12 +204,12 @@ impl Handler<Dispatch> for NodeLink {
 
             req.correlation = Some(self.correlation_counter);
 
-            let nm = Net {
+            let netreq = Net {
                 request: Some(req),
                 ..Default::default()
             };
 
-            self.stream.write(nm.to_buf().unwrap());
+            self.stream.write(netreq);
             actix::Response::fut(Box::pin(async move {
                 match tokio::time::timeout(Duration::from_secs(10), rx).await {
                     Ok(Ok(r)) => {
@@ -191,11 +226,11 @@ impl Handler<Dispatch> for NodeLink {
                 }
             }))
         } else {
-            let nm = Net {
+            let netreq = Net {
                 request: Some(req),
                 ..Default::default()
             };
-            self.stream.write(nm.to_buf().unwrap());
+            self.stream.write(netreq);
             // TODO: reply should be an  option here
             actix::Response::reply(Ok(Bytes::new()))
         }

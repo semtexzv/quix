@@ -35,11 +35,11 @@ pub struct Request {
     #[prost(bytes, required, tag = "1")]
     pub procid: Vec<u8>,
 
-    #[prost(string, required, tag = "2")]
-    pub method: String,
-
-    #[prost(int64, optional, tag = "3")]
+    #[prost(int64, optional, tag = "2")]
     pub correlation: Option<i64>,
+
+    #[prost(string, required, tag = "3")]
+    pub method: String,
 
     #[prost(bytes, required, tag = "4")]
     pub body: Vec<u8>,

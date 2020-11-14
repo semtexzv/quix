@@ -1,4 +1,5 @@
 use pb_rs::types::FileDescriptor;
+use prost_build::Service;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("OUT_DIR", "./src/proto");
@@ -16,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for c in &cfg {
         FileDescriptor::write_proto(c).unwrap()
     }
+
 
     Ok(())
 }

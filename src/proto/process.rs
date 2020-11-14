@@ -149,8 +149,8 @@ impl<'a> MessageWrite for Pid<'a> {
             
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ProcessList<'a> {
-    pub new: Vec<Cow<'a, str>>,
-    pub del: Vec<Cow<'a, str>>,
+    pub newids: Vec<Cow<'a, str>>,
+    pub delids: Vec<Cow<'a, str>>,
 }
 
 impl<'a> MessageInfo for ProcessList<'a> {
@@ -162,8 +162,8 @@ impl<'a> MessageRead<'a> for ProcessList<'a> {
         let mut msg = Self::default();
         while !r.is_eof() {
             match r.next_tag(bytes) {
-                Ok(18) => msg.new.push(r.read_string(bytes).map(Cow::Borrowed)?),
-                Ok(26) => msg.del.push(r.read_string(bytes).map(Cow::Borrowed)?),
+                Ok(18) => msg.newids.push(r.read_string(bytes).map(Cow::Borrowed)?),
+                Ok(26) => msg.delids.push(r.read_string(bytes).map(Cow::Borrowed)?),
                 Ok(t) => { r.read_unknown(bytes, t)?; }
                 Err(e) => return Err(e),
             }
@@ -175,13 +175,13 @@ impl<'a> MessageRead<'a> for ProcessList<'a> {
 impl<'a> MessageWrite for ProcessList<'a> {
     fn get_size(&self) -> usize {
         0
-        + self.new.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
-        + self.del.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
+        + self.newids.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
+        + self.delids.iter().map(|s| 1 + sizeof_len((s).len())).sum::<usize>()
     }
 
     fn write_message<W: WriterBackend>(&self, w: &mut Writer<W>) -> Result<()> {
-        for s in &self.new { w.write_with_tag(18, |w| w.write_string(&**s))?; }
-        for s in &self.del { w.write_with_tag(26, |w| w.write_string(&**s))?; }
+        for s in &self.newids { w.write_with_tag(18, |w| w.write_string(&**s))?; }
+        for s in &self.delids { w.write_with_tag(26, |w| w.write_string(&**s))?; }
         Ok(())
     }
 }
