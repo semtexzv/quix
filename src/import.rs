@@ -1,3 +1,4 @@
+pub use crate as quix;
 pub use actix::{
     Addr,
     Actor,
@@ -26,7 +27,7 @@ pub use actix::{
 pub use uuid::Uuid;
 pub use std::{
     marker::PhantomData,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     convert::{TryFrom, TryInto},
     time::Duration,
     future::Future,

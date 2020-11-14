@@ -1,5 +1,5 @@
 use crate::import::*;
-use crate::process::registry::Dispatch;
+use crate::{Dispatch, Broadcast};
 
 pub struct RegisterRecipient<M>(pub Recipient<M>)
 where M: Message + Send,
@@ -28,7 +28,14 @@ pub trait Service: Sized + Message {
         return Ok(b.freeze());
     }
 
-    fn make_ann_dispatch(&self, to: Uuid) -> Result<Dispatch, ()> {
+    fn make_broadcast(&self) -> Result<Broadcast, ()> {
+        Ok(Broadcast {
+            method: Self::ID,
+            body: Service::to_buf(self)?
+        })
+    }
+
+    fn make_announcement(&self, to: Uuid) -> Result<Dispatch, ()> {
         Ok(Dispatch {
             id: to,
             body: Service::to_buf(self)?,
@@ -36,7 +43,8 @@ pub trait Service: Sized + Message {
             wait_for_response: false,
         })
     }
-    fn make_call_dispatch(&self, to: Uuid) -> Result<Dispatch, ()> {
+
+    fn make_call(&self, to: Uuid) -> Result<Dispatch, ()> {
         Ok(Dispatch {
             id: to,
             body: Service::to_buf(self)?,

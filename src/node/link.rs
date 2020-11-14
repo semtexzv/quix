@@ -2,18 +2,21 @@ use crate::import::*;
 
 use std::io;
 use actix::io::{FramedWrite, WriteHandler};
-use tokio::net::tcp::OwnedWriteHalf;
+use tokio::{
+    net::tcp::OwnedWriteHalf,
+    net::TcpStream,
+};
 
 use crate::{
+    Broadcast, Dispatch,
     node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate},
     proto::{Meta, Net, Request, Response, PingPong},
     process::registry::ProcessRegistry,
-    process::registry::Dispatch,
     process::DispatchError,
     global::{Global, Get},
-    util::{Service, uuid}
+    util::{Service, uuid},
 };
-use tokio::net::TcpStream;
+
 
 pub struct NodeLink {
     id: Uuid,
@@ -179,6 +182,25 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
 }
 
 
+impl Handler<Broadcast> for NodeLink {
+    type Result = ();
+
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
+        let mut req = Request {
+            correlation: None,
+            procid: None,
+
+            methodid: msg.method,
+            body: msg.body.to_vec(),
+        };
+        let netreq = Net {
+            request: Some(req),
+            ..Default::default()
+        };
+        self.stream.write(netreq);
+    }
+}
+
 impl Handler<Dispatch> for NodeLink {
     type Result = actix::Response<Bytes, DispatchError>;
 
@@ -198,33 +220,23 @@ impl Handler<Dispatch> for NodeLink {
 
             req.correlation = Some(self.correlation_counter);
 
-            let netreq = Net {
+            let net = Net {
                 request: Some(req),
                 ..Default::default()
             };
 
-            self.stream.write(netreq);
-            actix::Response::fut(Box::pin(async move {
-                match tokio::time::timeout(Duration::from_secs(10), rx).await {
-                    Ok(Ok(r)) => {
-                        r
-                    }
-                    Ok(Err(e)) => {
-                        // closed
-                        Err(DispatchError::MailboxRemote)
-                    }
-                    Err(e) => {
-                        // Timeout
-                        Err(DispatchError::TimeoutRemote)
-                    }
-                }
-            }))
+            self.stream.write(net);
+            let fut = tokio::time::timeout(Duration::from_secs(10), rx);
+            actix::Response::fut(fut
+                .map_err(|_| DispatchError::Timeout)
+                .map(|v| v.map(|v| v.map_err(|_| DispatchError::MailboxRemote))??)
+            )
         } else {
-            let netreq = Net {
+            let net = Net {
                 request: Some(req),
                 ..Default::default()
             };
-            self.stream.write(netreq);
+            self.stream.write(net);
             // TODO: reply should be an  option here
             actix::Response::reply(Ok(Bytes::new()))
         }

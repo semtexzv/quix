@@ -7,8 +7,8 @@ use crate::node::link::NodeLink;
 use crate::util::{RegisterRecipient, Service};
 use crate::global::{Get, Global};
 use crate::process::{DispatchError, Dispatcher};
-use crate::process::registry::{Dispatch};
 use tokio::net::TcpStream;
+use crate::{Broadcast, Dispatch};
 
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
@@ -176,17 +176,13 @@ impl Handler<SendToNode> for NodeControl {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Broadcast(pub Dispatch);
-
-impl Message for Broadcast { type Result = (); }
 
 impl Handler<Broadcast> for NodeControl {
     type Result = ();
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
         for n in self.links.values() {
-            n.do_send(msg.0.clone());
+            n.do_send(msg.clone());
         }
     }
 }

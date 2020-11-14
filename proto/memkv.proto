@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package quix.memkv;
+
+import "google/protobuf/empty.proto";
+
+message Empty {
+
+}
+
+message Key {
+  required bytes data = 1;
+}
+
+message Value {
+  optional bytes data = 1;
+}
+
+message Entry {
+  required Key key = 1;
+  required Value value = 2;
+}
+
+service MemKv {
+  // We can only read entries from remote nodes. This can serve for basic process discovery for apps
+  rpc Get(Key) returns(Value);
+}

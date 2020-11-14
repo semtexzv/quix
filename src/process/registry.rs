@@ -2,9 +2,10 @@ use crate::import::*;
 
 
 use crate::process::{Dispatcher, ProcessDispatch, Pid, Process, DispatchError};
-use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, Broadcast, NodeUpdate};
+use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, NodeUpdate};
 use crate::util::{RegisterRecipient, Service};
 use crate::proto::{Update, ProcessList};
+use crate::Dispatch;
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -65,9 +66,8 @@ impl Supervised for ProcessRegistry {
                 delids: del.iter().fold(vec![], fold_uuids),
             };
 
-            let disp = Update(plist).make_ann_dispatch(Uuid::nil()).unwrap();
+            let bcast = Update(plist).make_broadcast().unwrap();
 
-            let bcast = Broadcast(disp);
             let bcast = NodeControl::from_registry().send(bcast);
             ctx.spawn(wrap_future(async move { bcast.await.unwrap() }));
         });
@@ -105,7 +105,7 @@ impl Handler<NodeUpdate> for ProcessRegistry {
                 newids: self.local.keys().fold(vec![], fold_uuids),
                 delids: vec![],
             };
-            let msg = SendToNode(id, Update(update).make_ann_dispatch(Uuid::nil()).unwrap());
+            let msg = SendToNode(id, Update(update).make_announcement(Uuid::nil()).unwrap());
             let fut = control.send(msg);
             let fut = wrap_future(async move { fut.await.unwrap().unwrap(); });
             // TODO: Do we need to wait here ?
@@ -160,24 +160,6 @@ impl Handler<UnregisterProcess> for ProcessRegistry {
         self.local.remove(&msg.id);
         self.deleted.insert(msg.id);
     }
-}
-
-/// Dispatch a message to appropriate handler
-///
-/// if `id.is_nil() && !wait_for_response` then the response is returned as soon as local
-/// link sent the message over the wire
-///
-/// Otherwise sets up a correlation counter and waits for response with a timeout(to prevent DOS attacks on correlation cache)
-#[derive(Debug, Clone)]
-pub struct Dispatch {
-    pub id: Uuid,
-    pub method: u64,
-    pub body: Bytes,
-    pub wait_for_response: bool,
-}
-
-impl Message for Dispatch {
-    type Result = Result<Bytes, DispatchError>;
 }
 
 impl Handler<Dispatch> for ProcessRegistry {

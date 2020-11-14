@@ -1,19 +1,19 @@
 use crate::import::*;
 
-use crate::process::registry::{Dispatch, ProcessRegistry, RegisterProcess, UnregisterProcess};
+use crate::process::registry::{ProcessRegistry, RegisterProcess, UnregisterProcess};
 use crate::node::{NodeControl, SendToNode};
 use crate::util::Service;
 
 use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
 use actix::Handler;
 use std::pin::Pin;
+use crate::Dispatch;
 
 pub mod registry;
 
 #[derive(Debug)]
 pub enum DispatchError {
-    TimeoutLocal,
-    TimeoutRemote,
+    Timeout,
     DispatchRemote,
     DispatchLocal,
     MailboxRemote,
@@ -52,7 +52,7 @@ impl<A: Actor<Context=Self>> Process<A> where A: ProcessDispatch
 
     /// Start a new process, with the ability to manipiulate its context before  actual startup
     pub fn start_with(f: impl FnOnce(&mut Self) -> A) -> Pid<A> {
-        let (tx, rx) = actix::dev::channel::channel(2);
+        let (tx, rx) = actix::dev::channel::channel(8);
         // Global process registry
         let id = Uuid::new_v4();
         let parts = ContextParts::new(rx.sender_producer());
@@ -194,7 +194,7 @@ impl<A: Actor + ProcessDispatch> Pid<A> {
         match self {
             Pid::Local { addr, .. } => PidRequest::Local(addr.send(m)),
             Pid::Remote(id) => {
-                let dispatch = m.make_call_dispatch(id.clone()).unwrap();
+                let dispatch = m.make_call(id.clone()).unwrap();
                 PidRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
             }
         }
@@ -209,7 +209,7 @@ impl<A: Actor + ProcessDispatch> Pid<A> {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
-                let dispatch = m.make_ann_dispatch(id.clone()).unwrap();
+                let dispatch = m.make_announcement(id.clone()).unwrap();
                 ProcessRegistry::from_registry().do_send(dispatch)
             }
         }
@@ -312,7 +312,7 @@ where M: Message + Service + Send,
         if let Some(ref local) = self.local {
             return PidRecipientRequest::Local(local.send(m));
         } else {
-            let dispatch = m.make_call_dispatch(self.id.clone()).unwrap();
+            let dispatch = m.make_call(self.id.clone()).unwrap();
             PidRecipientRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
         }
     }
@@ -321,7 +321,7 @@ where M: Message + Service + Send,
         if let Some(ref local) = self.local {
             local.do_send(m)
         } else {
-            let dispatch = m.make_ann_dispatch(self.id.clone()).unwrap();
+            let dispatch = m.make_announcement(self.id.clone()).unwrap();
             Ok(ProcessRegistry::from_registry().do_send(dispatch))
         }
     }
