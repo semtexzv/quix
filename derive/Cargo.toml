@@ -1,6 +1,6 @@
 [package]
 name = "quix-derive"
-version = "0.0.3"
+version = "0.0.5"
 authors = ["Michal Hornicky <semtexzv@gmail.com>"]
 description = "Derive macro for generation quix::ProcessDispatch"
 keywords = ["template", "proc_macro", "procmacro", "actix"]

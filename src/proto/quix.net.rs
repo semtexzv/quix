@@ -25,15 +25,15 @@ pub struct Request {
     pub procid: ::std::option::Option<std::vec::Vec<u8>>,
     #[prost(int64, optional, tag="2")]
     pub correlation: ::std::option::Option<i64>,
-    #[prost(int64, required, tag="3")]
-    pub methodid: i64,
+    #[prost(fixed64, required, tag="3")]
+    pub methodid: u64,
     #[prost(bytes, required, tag="4")]
     pub body: std::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Response {
-    #[prost(int64, optional, tag="1")]
-    pub correlation: ::std::option::Option<i64>,
+    #[prost(int64, required, tag="1")]
+    pub correlation: i64,
     #[prost(bytes, required, tag="2")]
     pub body: std::vec::Vec<u8>,
 }

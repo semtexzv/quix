@@ -1,5 +1,5 @@
 use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler, ActorContext};
-use crate::node::proto::{Meta, Net, Request, Response, PingPong};
+use crate::proto::{Meta, Net, Request, Response, PingPong};
 use crate::node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
@@ -59,8 +59,8 @@ impl tokio_util::codec::Decoder for NetCodec {
             return Ok(None);
         }
         let len = u32::from_be_bytes([src[0], src[1], src[2], src[3]]) as usize;
-        if src.len() < len+4 {
-            return Ok(None)
+        if src.len() < len + 4 {
+            return Ok(None);
         }
         let len = src.get_u32() as usize;
         let msg = src.split_to(len);
@@ -75,8 +75,10 @@ impl NodeLink {
     pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
         let codec = NetCodec;
 
+        socket.set_nodelay(true).unwrap();
+
         let v = Global::<NodeConfig>::from_registry().send(Get::default()).await.unwrap().unwrap();
-        let meta = Meta { id: v.id.as_bytes().to_vec() };
+        let meta = Meta { nodeid: v.id.as_bytes().to_vec() };
 
         let peer_addr = socket.peer_addr().unwrap();
 
@@ -88,7 +90,7 @@ impl NodeLink {
         tx.send(Net { meta: Some(meta), ..Default::default() }).await.unwrap();
 
         let other = rx.next().await.unwrap().unwrap().meta.unwrap();
-        let id: Uuid = uuid(other.id.as_slice());
+        let id: Uuid = uuid(other.nodeid.as_slice());
 
         let tx = tx.into_inner();
 
@@ -99,9 +101,7 @@ impl NodeLink {
             ctx.run_interval(Duration::from_secs(1), |this: &mut Self, ctx| {
                 log::trace!("Pinging");
                 this.stream.write(Net {
-                    ping: Some(PingPong {
-                        value: "Ping".to_string()
-                    }),
+                    ping: Some(PingPong {}),
                     ..Default::default()
                 });
             });
@@ -133,7 +133,7 @@ impl StreamHandler<Result<Net, std::io::Error>> for NodeLink {
         };
 
         if let Some(ping) = msg.ping {
-            log::trace!("Got pinged: {:?}", ping.value);
+            log::trace!("Got pinged");
             self.stream.write(Net {
                 pong: Some(ping),
                 ..Default::default()
@@ -141,10 +141,12 @@ impl StreamHandler<Result<Net, std::io::Error>> for NodeLink {
         }
         if let Some(mut req) = msg.request {
             log::trace!("Received request");
-            let procid: Uuid = uuid(req.procid);
+
+            let procid: Uuid = req.procid.map(uuid).unwrap_or(Uuid::nil());
+
             let dispatch = Dispatch {
                 id: procid,
-                method: req.method,
+                method: req.methodid,
                 body: Bytes::from(req.body),
                 wait_for_response: req.correlation.is_some(),
             };
@@ -191,8 +193,8 @@ impl Handler<Dispatch> for NodeLink {
     fn handle(&mut self, msg: Dispatch, ctx: &mut Context<Self>) -> Self::Result {
         let mut req = Request {
             correlation: None,
-            procid: msg.id.as_bytes().to_vec(),
-            method: msg.method,
+            procid: Some(msg.id.as_bytes().to_vec()),
+            methodid: msg.method,
             body: msg.body.to_vec(),
         };
 

@@ -14,7 +14,7 @@ impl<T: Unpin + Send + 'static> Supervised for Global<T> {}
 impl<T: Default + Unpin + Send + 'static> SystemService for Global<T> {}
 
 
-pub struct Get<T>(PhantomData<T>);
+pub struct Get<T>(pub PhantomData<T>);
 
 impl<T> Default for Get<T> {
     fn default() -> Self {

@@ -9,7 +9,6 @@ use actix::{Actor, Context, Addr, Handler, ActorFuture, AsyncContext, Message, S
 use actix::fut::{wrap_future, wrap_stream};
 
 mod link;
-mod proto;
 
 use crate::node::link::NodeLink;
 use std::sync::Arc;
@@ -58,7 +57,7 @@ pub struct NodeControl {
     ///
     /// Messages which are sent to process id of 00000000000000000....
     /// are considered unadressed, and are dispatched from here
-    pub dispatch: HashMap<&'static str, NodeHandler>,
+    pub dispatch: HashMap<u64, NodeHandler>,
     pub listeners: HashMap<Uuid, Recipient<NodeUpdate>>,
 }
 
@@ -222,7 +221,7 @@ impl Handler<RecvFromNode<Dispatch>> for NodeControl {
 
     fn handle(&mut self, msg: RecvFromNode<Dispatch>, ctx: &mut Self::Context) -> Self::Result {
         log::info!("NodeControl dispatching unadressed message");
-        match self.dispatch.get_mut(msg.inner.method.as_str()) {
+        match self.dispatch.get_mut(&msg.inner.method) {
             Some(m) => {
                 let fut = (m)(msg.node_id, msg.inner.body);
                 ctx.spawn(wrap_future(async move { fut.await.unwrap(); }));
@@ -248,7 +247,7 @@ pub type NodeHandler = Box<dyn FnMut(Uuid, Bytes)
     -> Pin<Box<dyn Future<Output=Result<Bytes, DispatchError>>>> + Send + 'static>;
 
 pub struct RegisterSystemHandler {
-    method: &'static str,
+    method: u64,
     handler: NodeHandler,
 }
 
@@ -272,7 +271,7 @@ impl RegisterSystemHandler {
         };
 
         RegisterSystemHandler {
-            method: M::NAME,
+            method: M::ID,
             handler: Box::new(handler),
         }
     }

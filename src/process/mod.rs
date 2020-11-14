@@ -2,14 +2,14 @@ use actix::{Actor, Addr, Message, Handler, ActorFuture, AsyncContext, SpawnHandl
 use uuid::Uuid;
 use actix::fut::wrap_future;
 use std::marker::PhantomData;
-use actix::dev::{Mailbox, ContextParts, ContextFut, AsyncContextParts, ToEnvelope, Envelope};
+use actix::dev::{Mailbox, ContextParts, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use futures::channel::oneshot::Sender;
 use bytes::Bytes;
 use futures::future::BoxFuture;
-use actix::prelude::Request;
+use actix::prelude::{Request, SendError};
 use crate::process::registry::{Dispatch, ProcessRegistry, RegisterProcess, UnregisterProcess};
 use crate::node::{NodeControl, SendToNode};
 use futures::{FutureExt, TryFutureExt};
@@ -33,7 +33,7 @@ pub enum DispatchError {
 /// Trait used to get generic dispatchers for different actors
 pub trait Dispatcher: Send + 'static {
     /// Lookup the method, deserialize to proper type, execute, serialize and return
-    fn dispatch(&self, method: String, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
+    fn dispatch(&self, method: u64, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
 }
 
 /// Trait which must be implemented for all processes.
@@ -46,7 +46,7 @@ pub trait ProcessDispatch: Actor<Context=Process<Self>> {
 
 /// A special execution context. In this context the actor has a stable identity,
 /// whuch should not change. It can also receive messages from remote nodes.
-pub struct Process<A: Actor<Context=Self>> where A: ProcessDispatch
+pub struct Process<A: Actor<Context=Self>>
 {
     id: Uuid,
     parts: ContextParts<A>,
@@ -104,7 +104,6 @@ impl<A: Actor<Context=Self>> Process<A> where A: ProcessDispatch
 }
 
 impl<A: Actor<Context=Self>> AsyncContextParts<A> for Process<A>
-where A: ProcessDispatch
 {
     fn parts(&mut self) -> &mut ContextParts<A> {
         &mut self.parts
@@ -112,7 +111,6 @@ where A: ProcessDispatch
 }
 
 impl<A: Actor<Context=Self>> ActorContext for Process<A>
-where A: ProcessDispatch
 {
     fn stop(&mut self) {
         self.parts.stop()
@@ -128,7 +126,6 @@ where A: ProcessDispatch
 }
 
 impl<A: Actor<Context=Self>> AsyncContext<A> for Process<A>
-where A: ProcessDispatch
 {
     fn address(&self) -> Addr<A> {
         self.parts.address()
@@ -154,7 +151,7 @@ where A: ProcessDispatch
 }
 
 impl<A: Actor<Context=Self>, M: Message> ToEnvelope<A, M> for Process<A>
-where A: ProcessDispatch + Handler<M>,
+where A: Handler<M>,
       M: Send + 'static,
       M::Result: Send
 {
@@ -164,7 +161,7 @@ where A: ProcessDispatch + Handler<M>,
 }
 
 /// Global process identifier. This can be used to send messages to actors on different nodes.
-pub enum Pid<A: Actor> {
+pub enum Pid<A: Actor + ProcessDispatch> {
     Local {
         id: Uuid,
         addr: Addr<A>,
@@ -172,7 +169,7 @@ pub enum Pid<A: Actor> {
     Remote(Uuid),
 }
 
-impl<A: Actor> Clone for Pid<A> {
+impl<A: Actor + ProcessDispatch> Clone for Pid<A> {
     fn clone(&self) -> Self {
         match self {
             Pid::Local {
@@ -183,7 +180,7 @@ impl<A: Actor> Clone for Pid<A> {
     }
 }
 
-impl<A: Actor> Pid<A> {
+impl<A: Actor + ProcessDispatch> Pid<A> {
     pub fn local_addr(&self) -> Option<Addr<A>> {
         match self {
             Pid::Local { addr, .. } => Some(addr.clone()),
@@ -197,12 +194,11 @@ impl<A: Actor> Pid<A> {
             Pid::Remote(id) => id.clone()
         }
     }
-
-    pub fn send<M>(self, m: M) -> PidRequest<A, M>
+    pub fn send<M>(&self, m: M) -> PidRequest<A, M>
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
           M: Message + Service + Send,
-          M::Result: Service + Send,
+          M::Result: Send,
 
     {
         match self {
@@ -214,17 +210,35 @@ impl<A: Actor> Pid<A> {
         }
     }
 
-    pub fn do_send<M>(self, m: M)
+    pub fn do_send<M>(&self, m: M)
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
           M: Message + Service + Send,
-          M::Result: Service + Send,
+          M::Result: Send,
     {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
                 let dispatch = m.make_ann_dispatch(id.clone()).unwrap();
                 ProcessRegistry::from_registry().do_send(dispatch)
+            }
+        }
+    }
+
+    pub fn recipient<M>(&self) -> PidRecipient<M>
+    where A: Handler<M>,
+          A::Context: ToEnvelope<A, M>,
+          M: Message + Service + Send + 'static,
+          M::Result: Send,
+    {
+        match self {
+            Self::Local { addr, id } => PidRecipient {
+                id: id.clone(),
+                local: Some(addr.clone().recipient()),
+            },
+            Self::Remote(id) => PidRecipient {
+                id: id.clone(),
+                local: None,
             }
         }
     }
@@ -242,12 +256,11 @@ where A: Actor + Handler<M>,
     Remote(Request<ProcessRegistry, Dispatch>),
 }
 
-
 impl<A: Actor, M: Message> Future for PidRequest<A, M>
 where A: Actor + Handler<M>,
       A::Context: ToEnvelope<A, M>,
       M: Message + Service + Unpin + Send,
-      M::Result: Service + Send
+      M::Result: Send
 {
     type Output = Result<M::Result, DispatchError>;
 
@@ -259,7 +272,94 @@ where A: Actor + Handler<M>,
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M::Result as Service>::read(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(<M as Service>::read_result(res).map_err(|e| DispatchError::Format))
+                    }
+                    Ok(Err(err)) => Poll::Ready(Err(err)),
+                    Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
+                }
+            }
+        }
+    }
+}
+
+/// Can be used to send messages across network without knowing the type of the actor receiving them
+pub struct PidRecipient<M>
+where M: Message + Send,
+      M::Result: Send,
+{
+    id: Uuid,
+    local: Option<Recipient<M>>,
+}
+
+impl<M> PidRecipient<M>
+where M: Message + Send,
+      M::Result: Send {
+    /// Create a recipient from just an id
+    pub fn from_id(id: Uuid) -> Self {
+        Self {
+            id,
+            local: None,
+        }
+    }
+}
+
+impl<M> Clone for PidRecipient<M>
+where M: Message + Send,
+      M::Result: Send {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            local: self.local.clone(),
+        }
+    }
+}
+
+impl<M> PidRecipient<M>
+where M: Message + Service + Send,
+      M::Result: Send,
+{
+    pub fn send(&self, m: M) -> PidRecipientRequest<M> {
+        if let Some(ref local) = self.local {
+            return PidRecipientRequest::Local(local.send(m));
+        } else {
+            let dispatch = m.make_call_dispatch(self.id.clone()).unwrap();
+            PidRecipientRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
+        }
+    }
+
+    pub fn do_send(&self, m: M) -> Result<(), SendError<M>> {
+        if let Some(ref local) = self.local {
+            local.do_send(m)
+        } else {
+            let dispatch = m.make_ann_dispatch(self.id.clone()).unwrap();
+            Ok(ProcessRegistry::from_registry().do_send(dispatch))
+        }
+    }
+}
+
+pub enum PidRecipientRequest<M>
+where M: Message + Send + 'static,
+      M::Result: Send {
+    Local(RecipientRequest<M>),
+    Remote(Request<ProcessRegistry, Dispatch>),
+}
+
+
+impl<M: Message> Future for PidRecipientRequest<M>
+where M: Message + Service + Unpin + Send,
+      M::Result: Send
+{
+    type Output = Result<M::Result, DispatchError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            Self::Local(r) => {
+                r.poll_unpin(cx).map_err(|e| DispatchError::DispatchLocal)
+            }
+            Self::Remote(r) => {
+                match futures::ready!(r.poll_unpin(cx)) {
+                    Ok(Ok(res)) => {
+                        Poll::Ready(<M as Service>::read_result(res).map_err(|e| DispatchError::Format))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),

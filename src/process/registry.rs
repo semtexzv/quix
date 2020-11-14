@@ -57,7 +57,11 @@ impl Supervised for ProcessRegistry {
         control.do_send(RegisterSystemHandler::new::<Update>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
-            log::info!("Sending process table update");
+            if this.new.is_empty() && this.deleted.is_empty() {
+                return;
+            }
+
+            log::info!("Broadcasting process table update");
             let new = std::mem::replace(&mut this.new, HashSet::new());
             let del = std::mem::replace(&mut this.deleted, HashSet::new());
 
@@ -106,7 +110,7 @@ impl Handler<NodeUpdate> for ProcessRegistry {
                 newids: self.local.keys().fold(vec![], fold_uuids),
                 delids: vec![],
             };
-            let msg = SendToNode(id,  Update(update).make_ann_dispatch(Uuid::nil()).unwrap());
+            let msg = SendToNode(id, Update(update).make_ann_dispatch(Uuid::nil()).unwrap());
             let fut = control.send(msg);
             let fut = wrap_future(async move { fut.await.unwrap().unwrap(); });
             // TODO: Do we need to wait here ?
@@ -172,7 +176,7 @@ impl Handler<UnregisterProcess> for ProcessRegistry {
 #[derive(Debug, Clone)]
 pub struct Dispatch {
     pub id: Uuid,
-    pub method: String,
+    pub method: u64,
     pub body: Bytes,
     pub wait_for_response: bool,
 }

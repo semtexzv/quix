@@ -1,3 +1,5 @@
+#![feature(format_args_capture)]
+
 use std::fmt::Write;
 
 pub struct Generator;
@@ -5,31 +7,73 @@ pub struct Generator;
 impl prost_build::ServiceGenerator for Generator {
     fn generate(&mut self, service: Service, buf: &mut String) {
         for m in service.methods {
-            let outtype = if m.output_type == "Empty" {
+            eprintln!("{:?}", m);
+            let outtype = if m.output_proto_type == ".google.protobuf.Empty" {
                 "()".to_string()
             } else {
                 format!("Result<{}, ()>", m.output_type)
             };
 
-            let intype = if m.input_type == "Empty" {
+            let intype = if m.input_proto_type == ".google.protobuf.Empty" {
                 "()".to_string()
             } else {
                 m.input_type
             };
 
+            // TODO: Fix this crap
+            let (out_read, out_write) = if m.output_proto_type == ".google.protobuf.Empty" {
+                ("()".to_string(), "()".to_string())
+            } else {
+                (format!("Ok(<{}>::decode(b).unwrap())", m.output_type),
+                 format!("let a: &{o} = res.as_ref().unwrap(); a.encode(b).unwrap()", o = m.output_type)
+                )
+            };
+
+
+            let svc_spec = format!("{}.{}.{}", service.package, service.name, m.name);
+            let svc_id = crc64::crc64(0, svc_spec.as_bytes());
+
 
             write!(buf, r#"
+use quix::derive::*;
 pub struct {name}(pub {input});
+
+impl actix::Message for {name} {{
+    type Result = {res};
+}}
+
+impl quix::derive::Service for {name} {{
+    const NAME: &'static str = "{svc_spec}";
+    const ID: u64 = {svc_id};
+    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), ()> {{
+        prost::Message::encode(&self.0, b).map_err(|_| ())
+    }}
+    fn read(b: impl bytes::Buf) -> Result<Self, ()> {{
+        Ok(Self(prost::Message::decode(b).map_err(|_| ())?))
+    }}
+
+    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, ()> {{
+        Ok({out_read})
+    }}
+
+    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), ()> {{
+        {out_write};
+        Ok(())
+    }}
+}}
+
 impl From<{input}> for {name} {{
     fn from(a: {input}) -> Self {{
         Self(a)
     }}
 }}
+
 impl Into<{input}> for {name} {{
     fn into(self) -> {input} {{
         self.0
     }}
 }}
+
 impl ::core::ops::Deref for {name} {{
     type Target = {input};
     fn deref(&self) -> &Self::Target {{
@@ -41,22 +85,8 @@ impl ::core::ops::DerefMut for {name} {{
         &mut self.0
     }}
 }}
-impl crate::util::Service for {name} {{
-    const NAME: &'static str = "{pkg}.{svc}.{name}";
-     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), ()> {{
-        prost::Message::encode(&self.0, b).map_err(|_| ())
-    }}
-    fn read(b: impl bytes::Buf) -> Result<Self, ()> {{
-        Ok(Self(prost::Message::decode(b).map_err(|_| ())?))
-    }}
-}}
-impl actix::Message for {name} {{
-    type Result = {res};
-}}
             "#,
                    name = m.proto_name,
-                   svc = service.name,
-                   pkg = service.package,
                    res = outtype,
                    input = intype
             ).unwrap();

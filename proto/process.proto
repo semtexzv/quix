@@ -1,9 +1,8 @@
 syntax = "proto3";
 package quix.process;
 
-message Empty {
+import "google/protobuf/empty.proto";
 
-}
 message Pid {
   bytes id = 1;
 }
@@ -15,6 +14,6 @@ message ProcessList {
 }
 
 service Process {
-  rpc Update(ProcessList) returns (Empty);
-  rpc Get(Empty) returns (ProcessList);
+  rpc Update(ProcessList) returns (google.protobuf.Empty);
+  rpc Get(google.protobuf.Empty) returns (ProcessList);
 }

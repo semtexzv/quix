@@ -16,12 +16,21 @@ impl Message for Hello {
 
 impl Service for Hello {
     const NAME: &'static str = "";
+    const ID: u64 = 42;
 
     fn read(b: impl Buf) -> Result<Self, ()> {
         unimplemented!()
     }
 
     fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+        unimplemented!()
+    }
+
+    fn read_result(b: impl Buf) -> Result<Self::Result, ()> {
+        unimplemented!()
+    }
+
+    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), ()> {
         unimplemented!()
     }
 }

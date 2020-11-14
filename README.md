@@ -1,22 +1,25 @@
 # Quix
 Distribution layer for Actix.
-Aims to follow conventions set up by actix, and implement distribution capabilties, similar to erlangs [dist](https://erlang.org/doc/apps/erts/erl_dist_protocol.html).
+Aims to follow conventions set up by actix, and implement distribution capabilities, similar to erlang's [dist](https://erlang.org/doc/apps/erts/erl_dist_protocol.html).
 
 ## Usage 
+See [docs](https://docs.rs/quix)
+
+
+Protobuf:
+```protobuf
+message M1 {
+
+}
+service Exec{
+  rpc Method(M1) returns(M1);
+}
+```
+
+Code:
 ```rust
-#[derive(Debug, prost::Message)]
-pub struct M1 {
-    #[prost(int32, required, tag = "1")]
-    v: i32
-}
-
-impl actix::Message for M1 {
-    type Result = ();
-}
-
-
 #[derive(quix::ProcessDispatch)]
-#[dispatch(M1)]
+#[dispatch(Method)]
 pub struct Act {}
 
 impl Actor for Act {
@@ -28,10 +31,19 @@ impl Actor for Act {
         pid.do_send(M1 { v: 0 });
     }
 }
-impl Handler<M1> for Act { ... }
+impl Handler<Method> for Act { 
+    type Response = Result<M1, DispatchError>;
+... 
+}
 ```
 ### Messages
-Both internal and user messages use Protobuf format for serialization
+Both internal and user messages use Protobuf format for serialization. The indivudal `Messages` from protobuf just passed to
+prost.
+
+We use the `RPC` entry in protobuf services as a unit of communication. Each RPC generates a single struct, which implements
+`Service` and `actix::Message`. The user needs to:
+1. Implement `Handler<M>` for RPCs he wants to consume using the specified `Process` actor
+2. Derive `ProcessDispatch` on the actor with dispatch containing the RPC struct
 
 ### Processes
 In order to better handle distribution, we will introduce a concept of a process, which is just an identified actor.

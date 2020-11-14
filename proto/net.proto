@@ -19,16 +19,14 @@ message Meta {
 }
 
 message Request {
-
   optional bytes procid = 1;
   optional int64 correlation = 2;
 
-  required int64 methodid = 3;
+  required fixed64 methodid = 3;
   required bytes body = 4;
-
 }
 
 message Response {
-  optional int64 correlation = 1;
+  required int64 correlation = 1;
   required bytes body = 2;
 }

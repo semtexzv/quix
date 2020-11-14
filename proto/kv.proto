@@ -1,0 +1,23 @@
+syntax = "proto2";
+package quix.kv;
+
+import "google/protobuf/empty.proto";
+
+message Key {
+  required bytes data = 1;
+}
+
+message Value {
+  optional bytes data = 1;
+}
+
+message Entry {
+  required Key key = 1;
+  required Value value = 2;
+}
+
+service Kv {
+  rpc KvPut(Entry) returns(google.protobuf.Empty);
+  rpc KvGet(Key) returns(Value);
+  rpc KvcDelete(Key) returns(google.protobuf.Empty);
+}

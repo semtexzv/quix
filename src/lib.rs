@@ -4,6 +4,9 @@
 #![allow(unused)]
 #![deny(unused_must_use)]
 
+#[macro_use]
+extern crate serde;
+
 extern crate derive as _der;
 
 use std::sync::Arc;
@@ -26,6 +29,7 @@ pub mod node;
 pub mod util;
 pub mod suspend;
 pub mod global;
+pub mod metrics;
 
 pub use _der::ProcessDispatch;
 

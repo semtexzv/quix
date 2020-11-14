@@ -41,34 +41,50 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
         panic!("Missing paths")
     };
     let messages = paths.into_iter().map(|p| {
-        quote! {
-            if method.as_str() == #p::NAME {
-                let msg = <#p as Service>::read(data).map_err(|_| quix::derive::DispatchError::Format);
-                let run = async move {
-                    let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
-                    let mut buf = quix::derive::BytesMut::new();
-                    quix::derive::ProstMessage::encode(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
-                    Ok(buf.freeze())
-                };
-                return Box::pin(run);
-            }
+        let id = quote! { #p::ID };
+        let block = quote! {
+        {
+            let msg = <#p as Service>::read(data).map_err(|_| quix::derive::DispatchError::Format);
+            Box::pin(async move {
+                let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
+                let mut buf = quix::derive::BytesMut::new();
+                <#p as Service>::write_result(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
+                Ok(buf.freeze())
+            })
         }
+        };
+
+        quote! { #id => #block }
     });
 
+
+    let dispatch = quote! {
+        match method {
+            #(#messages),*
+            _ => {
+                Box::pin(async move { Err(quix::derive::DispatchError::DispatchRemote)})
+            }
+        }
+    };
+
     let name = i.ident;
+
+    let dispatcher = quote! {
+        pub struct LocalDispatcher { addr: actix::WeakAddr<#name> }
+        impl quix::derive::Dispatcher for LocalDispatcher {
+            fn dispatch(&self, method: u64, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
+                use quix::derive::Service;
+                let addr = self.addr.upgrade().unwrap().clone();
+                #dispatch
+            }
+        }
+        Box::new(LocalDispatcher { addr })
+    };
+
     let tokens = quote! {
         impl quix::derive::ProcessDispatch for #name {
             fn make_dispatcher(addr: actix::WeakAddr<Self>) -> Box<dyn quix::derive::Dispatcher> {
-                pub struct LocalDispatcher { addr: actix::WeakAddr<#name> }
-                impl quix::derive::Dispatcher for LocalDispatcher {
-                    fn dispatch(&self, method: String, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
-                        use quix::derive::Service;
-                        let addr = self.addr.upgrade().unwrap().clone();
-                        #(#messages)*
-                        return Box::pin(async move { Err(quix::derive::DispatchError::DispatchRemote)})
-                    }
-                }
-                return Box::new(LocalDispatcher { addr });
+                #dispatcher
             }
         }
     };
