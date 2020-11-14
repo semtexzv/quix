@@ -1,12 +1,20 @@
 syntax = "proto3";
 package quix.process;
 
+message Empty {
+
+}
 message Pid {
   bytes id = 1;
 }
 
-// List of created/deletet process ids
+// List of created/deleted process ids
 message ProcessList {
-  repeated string newids = 2;
-  repeated string delids = 3;
+  bytes newids = 2;
+  bytes delids = 3;
+}
+
+service Process {
+  rpc Update(ProcessList) returns (Empty);
+  rpc Get(Empty) returns (ProcessList);
 }

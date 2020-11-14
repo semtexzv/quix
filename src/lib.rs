@@ -15,10 +15,10 @@ use bytes::Bytes;
 pub mod derive {
     pub use futures::future::BoxFuture;
     pub use crate::process::{ProcessDispatch, Dispatcher, DispatchError};
-    pub use crate::util::Wired;
+    pub use crate::util::Service;
     pub use bytes::{BytesMut, Bytes};
+    pub use prost::Message as ProstMessage;
 }
-
 
 pub mod proto;
 pub mod process;

@@ -1,6 +1,8 @@
 use actix::*;
 use quix::{self, *};
 use quix::process::registry::{ProcessRegistry, RegisterProcess};
+use quix::util::Service;
+use bytes::{Buf, BufMut};
 
 
 #[derive(prost::Message)]
@@ -10,6 +12,17 @@ pub struct M {
 }
 impl Message for M {
     type Result = i32;
+}
+impl Service for M {
+    const NAME: &'static str = "M";
+
+    fn read(b: impl Buf) -> Result<Self, ()> {
+        unimplemented!()
+    }
+
+    fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+        unimplemented!()
+    }
 }
 
 #[derive(quix::ProcessDispatch)]

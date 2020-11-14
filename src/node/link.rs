@@ -20,7 +20,7 @@ use tokio::sync::oneshot::{Sender, channel};
 use actix::clock::Duration;
 use std::net::SocketAddr;
 use crate::global::{Global, Get};
-use crate::util::{Wired, uuid};
+use crate::util::{Service, uuid};
 
 pub struct NodeLink {
     id: Uuid,

@@ -1,0 +1,10 @@
+[package]
+name = "quix-build"
+version = "0.0.3"
+description = "Quix: Distribution layer for actix (build script support)cd .."
+authors = ["Michal Hornicky <semtexzv@gmail.com>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+prost-build = "0.6.1"

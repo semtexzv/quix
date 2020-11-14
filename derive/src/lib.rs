@@ -42,12 +42,12 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
     };
     let messages = paths.into_iter().map(|p| {
         quote! {
-            if method.as_str() == core::any::type_name::<#p>() {
-                let msg = <#p as Wired>::read(data).map_err(|_| quix::derive::DispatchError::Format);
+            if method.as_str() == #p::NAME {
+                let msg = <#p as Service>::read(data).map_err(|_| quix::derive::DispatchError::Format);
                 let run = async move {
                     let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
                     let mut buf = quix::derive::BytesMut::new();
-                    quix::derive::Wired::write(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
+                    quix::derive::ProstMessage::encode(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
                     Ok(buf.freeze())
                 };
                 return Box::pin(run);
@@ -62,7 +62,7 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
                 pub struct LocalDispatcher { addr: actix::WeakAddr<#name> }
                 impl quix::derive::Dispatcher for LocalDispatcher {
                     fn dispatch(&self, method: String, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
-                        use quix::derive::Wired;
+                        use quix::derive::Service;
                         let addr = self.addr.upgrade().unwrap().clone();
                         #(#messages)*
                         return Box::pin(async move { Err(quix::derive::DispatchError::DispatchRemote)})

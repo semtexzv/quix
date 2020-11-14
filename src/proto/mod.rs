@@ -1,3 +1,2 @@
-// Automatically generated mod.rs
-pub mod net;
-pub mod process;
+include!("./quix.net.rs");
+include!("./quix.process.rs");

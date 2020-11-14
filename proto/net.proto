@@ -23,7 +23,7 @@ message Request {
   optional bytes procid = 1;
   optional int64 correlation = 2;
 
-  required string method = 3;
+  required int64 methodid = 3;
   required bytes body = 4;
 
 }

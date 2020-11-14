@@ -8,7 +8,8 @@ use futures::FutureExt;
 use actix::clock::Duration;
 use actix::fut::wrap_future;
 use std::str::FromStr;
-use crate::util::{RegisterRecipient, Wired};
+use crate::util::{RegisterRecipient, Service};
+use crate::proto::{Update, ProcessList};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -42,16 +43,6 @@ impl SystemService for ProcessRegistry {}
 
 //use crate::proto::process::{ProcessList, ProcessListOwned};
 
-#[derive(prost::Message)]
-pub struct ProcessList {
-    #[prost(bytes, tag = "2")]
-    newids: Vec<u8>,
-    #[prost(bytes, tag = "3")]
-    delids: Vec<u8>,
-}
-
-impl actix::Message for ProcessList { type Result = (); }
-
 fn fold_uuids(mut a: Vec<u8>, u: &Uuid) -> Vec<u8> {
     a.extend_from_slice(u.as_bytes());
     a
@@ -63,7 +54,7 @@ impl Supervised for ProcessRegistry {
         let control = NodeControl::from_registry();
 
         control.do_send(RegisterRecipient(ctx.address().recipient::<NodeUpdate>()));
-        control.do_send(RegisterSystemHandler::new::<ProcessList>(ctx.address().recipient()));
+        control.do_send(RegisterSystemHandler::new::<Update>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
             log::info!("Sending process table update");
@@ -75,17 +66,19 @@ impl Supervised for ProcessRegistry {
                 delids: del.iter().fold(vec![], fold_uuids),
             };
 
-            let bcast = Broadcast(Dispatch::make_raw_announce(&plist, Uuid::nil()));
+            let disp = Update(plist).make_ann_dispatch(Uuid::nil()).unwrap();
+
+            let bcast = Broadcast(disp);
             let bcast = NodeControl::from_registry().send(bcast);
             ctx.spawn(wrap_future(async move { bcast.await.unwrap() }));
         });
     }
 }
 
-impl Handler<RecvFromNode<ProcessList>> for ProcessRegistry {
+impl Handler<RecvFromNode<Update>> for ProcessRegistry {
     type Result = ();
 
-    fn handle(&mut self, msg: RecvFromNode<ProcessList>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: RecvFromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 
@@ -113,7 +106,7 @@ impl Handler<NodeUpdate> for ProcessRegistry {
                 newids: self.local.keys().fold(vec![], fold_uuids),
                 delids: vec![],
             };
-            let msg = SendToNode(id, Dispatch::make_raw_announce(&update, Uuid::nil()));
+            let msg = SendToNode(id,  Update(update).make_ann_dispatch(Uuid::nil()).unwrap());
             let fut = control.send(msg);
             let fut = wrap_future(async move { fut.await.unwrap().unwrap(); });
             // TODO: Do we need to wait here ?
@@ -172,7 +165,7 @@ impl Handler<UnregisterProcess> for ProcessRegistry {
 
 /// Dispatch a message to appropriate handler
 ///
-/// if [id.is_nil() && !wait_for_response] then the response is returned as soon as local
+/// if `id.is_nil() && !wait_for_response` then the response is returned as soon as local
 /// link sent the message over the wire
 ///
 /// Otherwise sets up a correlation counter and waits for response with a timeout(to prevent DOS attacks on correlation cache)
@@ -182,33 +175,6 @@ pub struct Dispatch {
     pub method: String,
     pub body: Bytes,
     pub wait_for_response: bool,
-}
-
-impl Dispatch {
-    /// Create a new dispatch from raw message, this message doesn't have to be an
-    /// actual message, but rather any type that implements [prost::Message]
-    pub fn make_raw_announce<M>(msg: &M, to: Uuid) -> Self
-    where M: Wired
-    {
-        Dispatch {
-            id: to,
-            body: Wired::to_buf(msg).unwrap(),
-            method: core::any::type_name::<M>().to_string(),
-            wait_for_response: false,
-        }
-    }
-    /// Create a new dispatch from raw message, this message doesn't have to be an
-    /// actual message, but rather any type that implements [prost::Message]
-    pub fn make_raw_request<M>(msg: &M, to: Uuid) -> Self
-    where M: Wired
-    {
-        Dispatch {
-            id: to,
-            body: Wired::to_buf(msg).unwrap(),
-            method: core::any::type_name::<M>().to_string(),
-            wait_for_response: true,
-        }
-    }
 }
 
 impl Message for Dispatch {

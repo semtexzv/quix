@@ -16,7 +16,7 @@ use futures::{FutureExt, TryFutureExt};
 use tokio::macros::support::Pin;
 use futures::task::Poll;
 use std::task;
-use crate::util::Wired;
+use crate::util::Service;
 
 pub mod registry;
 
@@ -198,32 +198,32 @@ impl<A: Actor> Pid<A> {
         }
     }
 
-    pub fn send<M>(&self, m: M) -> PidRequest<A, M>
+    pub fn send<M>(self, m: M) -> PidRequest<A, M>
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + Wired + Send,
-          M::Result: Wired + Send,
+          M: Message + Service + Send,
+          M::Result: Service + Send,
 
     {
         match self {
             Pid::Local { addr, .. } => PidRequest::Local(addr.send(m)),
             Pid::Remote(id) => {
-                let dispatch = Dispatch::make_raw_request(&m, id.clone());
+                let dispatch = m.make_call_dispatch(id.clone()).unwrap();
                 PidRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
             }
         }
     }
 
-    pub fn do_send<M>(& self, m: M)
+    pub fn do_send<M>(self, m: M)
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + Wired + Send,
-          M::Result: Wired + Send,
+          M: Message + Service + Send,
+          M::Result: Service + Send,
     {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
-                let dispatch = Dispatch::make_raw_announce(&m, id.clone());
+                let dispatch = m.make_ann_dispatch(id.clone()).unwrap();
                 ProcessRegistry::from_registry().do_send(dispatch)
             }
         }
@@ -246,8 +246,8 @@ where A: Actor + Handler<M>,
 impl<A: Actor, M: Message> Future for PidRequest<A, M>
 where A: Actor + Handler<M>,
       A::Context: ToEnvelope<A, M>,
-      M: Message + Wired + Unpin + Send,
-      M::Result: Wired  + Send
+      M: Message + Service + Unpin + Send,
+      M::Result: Service + Send
 {
     type Output = Result<M::Result, DispatchError>;
 
@@ -259,7 +259,7 @@ where A: Actor + Handler<M>,
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M::Result as Wired>::read(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(<M::Result as Service>::read(res).map_err(|e| DispatchError::Format))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),

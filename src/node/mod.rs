@@ -18,11 +18,10 @@ use futures::{TryStreamExt, Future};
 use futures::future::BoxFuture;
 use std::pin::Pin;
 
-use crate::util::{RegisterRecipient, Wired};
+use crate::util::{RegisterRecipient, Service};
 use crate::global::{Get, Global};
 use crate::process::{DispatchError, Dispatcher};
 use crate::process::registry::{Dispatch};
-
 
 
 /*
@@ -256,7 +255,7 @@ pub struct RegisterSystemHandler {
 impl RegisterSystemHandler {
     /// Create new registration request for node-wide handler
     pub fn new<M>(rec: Recipient<RecvFromNode<M>>) -> Self
-    where M: actix::Message<Result=()> + Wired + Send + 'static,
+    where M: actix::Message<Result=()> + Service + Send + 'static,
     {
         let handler = move |node_id, data| -> Pin<Box<dyn Future<Output=_>>> {
             log::info!("Running global message handler");
@@ -273,7 +272,7 @@ impl RegisterSystemHandler {
         };
 
         RegisterSystemHandler {
-            method: core::any::type_name::<M>(),
+            method: M::NAME,
             handler: Box::new(handler),
         }
     }

@@ -1,6 +1,8 @@
 use actix::{Message, Actor, Handler};
 use quix::process::Process;
 use derive::ProcessDispatch;
+use quix::util::Service;
+use bytes::{Buf, BufMut};
 
 #[derive(Clone, prost::Message)]
 pub struct Hello {
@@ -10,6 +12,18 @@ pub struct Hello {
 
 impl Message for Hello {
     type Result = String;
+}
+
+impl Service for Hello {
+    const NAME: &'static str = "";
+
+    fn read(b: impl Buf) -> Result<Self, ()> {
+        unimplemented!()
+    }
+
+    fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+        unimplemented!()
+    }
 }
 
 #[derive(ProcessDispatch)]

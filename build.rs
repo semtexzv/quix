@@ -1,22 +1,11 @@
-use pb_rs::types::FileDescriptor;
-use prost_build::Service;
+use std::fmt::Write;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("OUT_DIR", "./src/proto");
-    let cfg = pb_rs::ConfigBuilder::new(
-        &["./proto/net.proto", "./proto/process.proto"],
-        None,
-        Some(&"./src/proto"),
-        &["./proto"],
-    )
-        .unwrap()
-        .owned(true)
-        .single_module(true)
-        .build();
 
-    for c in &cfg {
-        FileDescriptor::write_proto(c).unwrap()
-    }
+    quix_build::Config::new()
+        .service_generator(Box::new(quix_build::Generator))
+        .compile_protos(&["./proto/net.proto", "./proto/process.proto"], &["./proto"]).unwrap();
 
 
     Ok(())

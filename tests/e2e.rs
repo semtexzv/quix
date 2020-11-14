@@ -4,6 +4,8 @@ use std::time::Duration;
 use quix::Process;
 use std::thread::JoinHandle;
 use quix::global::{Global, Set};
+use quix::util::Service;
+use bytes::{Buf, BufMut};
 
 
 #[derive(prost::Message)]
@@ -16,6 +18,17 @@ impl Message for M {
     type Result = i32;
 }
 
+impl Service for M {
+    const NAME: &'static str = "M";
+
+    fn read(b: impl Buf) -> Result<Self, ()> {
+        unimplemented!()
+    }
+
+    fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+        unimplemented!()
+    }
+}
 #[derive(quix::ProcessDispatch)]
 #[dispatch(M)]
 pub struct Act {}
