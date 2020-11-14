@@ -1,26 +1,19 @@
-use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler, ActorContext};
-use crate::proto::{Meta, Net, Request, Response, PingPong};
-use crate::node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
-use uuid::Uuid;
-use futures::{SinkExt, StreamExt};
-use bytes::{Bytes, BytesMut, BufMut, Buf};
+use crate::import::*;
 
-use tokio_util::codec::{LengthDelimitedCodec, Encoder, Decoder};
-use tokio::net::TcpStream;
+use std::io;
+use actix::io::{FramedWrite, WriteHandler};
 use tokio::net::tcp::OwnedWriteHalf;
-use tokio::io::Error;
 
-use prost::Message;
-use actix::io::{WriteHandler, FramedWrite};
-use crate::process::registry::{ProcessRegistry, Dispatch};
-use actix::fut::wrap_future;
-use crate::process::DispatchError;
-use std::collections::HashMap;
-use tokio::sync::oneshot::{Sender, channel};
-use actix::clock::Duration;
-use std::net::SocketAddr;
-use crate::global::{Global, Get};
-use crate::util::{Service, uuid};
+use crate::{
+    node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate},
+    proto::{Meta, Net, Request, Response, PingPong},
+    process::registry::ProcessRegistry,
+    process::registry::Dispatch,
+    process::DispatchError,
+    global::{Global, Get},
+    util::{Service, uuid}
+};
+use tokio::net::TcpStream;
 
 pub struct NodeLink {
     id: Uuid,
@@ -33,7 +26,6 @@ impl Actor for NodeLink {
     type Context = Context<Self>;
 }
 
-use std::io;
 
 #[derive(Debug, Copy, Clone)]
 pub struct NetCodec;
@@ -119,8 +111,8 @@ impl NodeLink {
 
 impl WriteHandler<std::io::Error> for NodeLink {}
 
-impl StreamHandler<Result<Net, std::io::Error>> for NodeLink {
-    fn handle(&mut self, item: Result<Net, Error>, ctx: &mut Context<Self>) {
+impl StreamHandler<io::Result<Net>> for NodeLink {
+    fn handle(&mut self, item: io::Result<Net>, ctx: &mut Context<Self>) {
         let msg = match item {
             Ok(item) => item,
             Err(error) => {
@@ -201,7 +193,7 @@ impl Handler<Dispatch> for NodeLink {
         if msg.wait_for_response {
             self.correlation_counter = self.correlation_counter.wrapping_add(1);
 
-            let (tx, rx) = channel();
+            let (tx, rx) = futures::channel::oneshot::channel();
             self.running.insert(self.correlation_counter, tx);
 
             req.correlation = Some(self.correlation_counter);
