@@ -1,5 +1,6 @@
 #![feature(trait_alias)]
 #![feature(core_intrinsics)]
+#![feature(array_chunks)]
 #![allow(unused)]
 #![deny(unused_must_use)]
 
@@ -14,11 +15,12 @@ use bytes::Bytes;
 pub mod derive {
     pub use futures::future::BoxFuture;
     pub use crate::process::{ProcessDispatch, Dispatcher, DispatchError};
-    pub use prost::Message as ProstMessage;
+    pub use crate::util::Wired;
     pub use bytes::{BytesMut, Bytes};
 }
 
 
+pub mod proto;
 pub mod process;
 pub mod node;
 pub mod util;

@@ -1,5 +1,5 @@
 use actix::{Actor, Context, AsyncContext, StreamHandler, Addr, SystemService, ActorFuture, Handler, ActorContext};
-use crate::node::proto::{Meta, NodeProtoMessage, Request, Response, PingPong};
+use crate::node::proto::{Meta, Net, Request, Response, PingPong};
 use crate::node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate};
 use uuid::Uuid;
 use futures::{SinkExt, StreamExt};
@@ -20,7 +20,7 @@ use tokio::sync::oneshot::{Sender, channel};
 use actix::clock::Duration;
 use std::net::SocketAddr;
 use crate::global::{Global, Get};
-use crate::util::Wired;
+use crate::util::{Wired, uuid};
 
 pub struct NodeLink {
     id: Uuid,
@@ -35,10 +35,11 @@ impl Actor for NodeLink {
 
 impl NodeLink {
     pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
-        let codec = tokio_util::codec::LengthDelimitedCodec::builder();
+        let mut codec = tokio_util::codec::LengthDelimitedCodec::builder();
+        codec.length_field_length(4);
 
         let v = Global::<NodeConfig>::from_registry().send(Get::default()).await.unwrap().unwrap();
-        let meta = Meta { id: v.id.to_string() };
+        let meta = Meta { id: v.id.as_bytes().to_vec() };
 
         let peer_addr = socket.peer_addr().unwrap();
 
@@ -53,7 +54,7 @@ impl NodeLink {
         tx.send(meta).await.unwrap();
         let other = rx.next().await.unwrap().unwrap();
         let other: Meta = Wired::read(other).unwrap();
-        let id: Uuid = other.id.parse().unwrap();
+        let id: Uuid = uuid(other.id.as_slice());
 
         let tx = tx.into_inner();
 
@@ -63,7 +64,7 @@ impl NodeLink {
             let tx = FramedWrite::new(tx, codec.new_codec(), ctx);
             ctx.run_interval(Duration::from_secs(1), |this: &mut Self, ctx| {
                 log::trace!("Pinging");
-                this.stream.write(NodeProtoMessage {
+                this.stream.write(Net {
                     ping: Some(PingPong {
                         value: "Ping".to_string()
                     }),
@@ -95,17 +96,17 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
             }
         };
 
-        let msg: NodeProtoMessage = Wired::read(item).unwrap();
+        let msg: Net = Wired::read(item).unwrap();
         if let Some(ping) = msg.ping {
             log::trace!("Got pinged: {:?}", ping.value);
-            self.stream.write(NodeProtoMessage {
+            self.stream.write(Net {
                 pong: Some(ping),
                 ..Default::default()
             }.to_buf().unwrap());
         }
         if let Some(mut req) = msg.request {
             log::trace!("Received request");
-            let procid: Uuid = req.procid.parse().unwrap();
+            let procid: Uuid = uuid(req.procid);
             let dispatch = Dispatch {
                 id: procid,
                 method: req.method,
@@ -124,7 +125,7 @@ impl StreamHandler<Result<BytesMut, std::io::Error>> for NodeLink {
                 let work = wrap_future(procreg.send(dispatch))
                     .map(move |res, this: &mut Self, ctx| {
                         if let Some(correlation) = correlation {
-                            let msg = NodeProtoMessage {
+                            let msg = Net {
                                 response: Some(Response {
                                     correlation,
                                     body: res.unwrap().unwrap().to_vec(),
@@ -155,7 +156,7 @@ impl Handler<Dispatch> for NodeLink {
     fn handle(&mut self, msg: Dispatch, ctx: &mut Context<Self>) -> Self::Result {
         let mut req = Request {
             correlation: None,
-            procid: msg.id.to_string(),
+            procid: msg.id.as_bytes().to_vec(),
             method: msg.method,
             body: msg.body.to_vec(),
         };
@@ -168,7 +169,7 @@ impl Handler<Dispatch> for NodeLink {
 
             req.correlation = Some(self.correlation_counter);
 
-            let nm = NodeProtoMessage {
+            let nm = Net {
                 request: Some(req),
                 ..Default::default()
             };
@@ -190,7 +191,7 @@ impl Handler<Dispatch> for NodeLink {
                 }
             }))
         } else {
-            let nm = NodeProtoMessage {
+            let nm = Net {
                 request: Some(req),
                 ..Default::default()
             };

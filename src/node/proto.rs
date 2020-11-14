@@ -1,6 +1,6 @@
 /// Messages exchanged between individual nodes on lowest protocol level
 #[derive(prost::Message)]
-pub struct NodeProtoMessage {
+pub struct Net {
     #[prost(message, optional, tag = "1")]
     pub ping: Option<PingPong>,
 
@@ -26,14 +26,14 @@ pub struct PingPong {
 
 #[derive(prost::Message)]
 pub struct Meta {
-    #[prost(string, tag = "1")]
-    pub id: String
+    #[prost(bytes, tag = "1")]
+    pub id: Vec<u8>
 }
 
 #[derive(prost::Message)]
 pub struct Request {
-    #[prost(string, required, tag = "1")]
-    pub procid: String,
+    #[prost(bytes, required, tag = "1")]
+    pub procid: Vec<u8>,
 
     #[prost(string, required, tag = "2")]
     pub method: String,

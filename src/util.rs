@@ -1,6 +1,7 @@
 use actix::{Recipient, Message};
 use uuid::Uuid;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::convert::TryInto;
 
 pub struct RegisterRecipient<M>(pub Recipient<M>)
 where M: Message + Send,
@@ -22,6 +23,7 @@ pub trait Wired: Sized {
     fn read(b: impl Buf) -> Result<Self, ()>;
 }
 
+
 impl<T> Wired for T where T: prost::Message + Default {
     fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
         prost::Message::encode(self, b).map_err(|_| ())
@@ -30,4 +32,8 @@ impl<T> Wired for T where T: prost::Message + Default {
     fn read(b: impl Buf) -> Result<Self, ()> {
         prost::Message::decode( b).map_err(|_| ())
     }
+}
+
+pub fn uuid(data: impl AsRef<[u8]>) -> Uuid {
+    Uuid::from_bytes(data.as_ref().try_into().unwrap())
 }

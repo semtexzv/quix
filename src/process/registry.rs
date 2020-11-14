@@ -8,7 +8,6 @@ use futures::FutureExt;
 use actix::clock::Duration;
 use actix::fut::wrap_future;
 use std::str::FromStr;
-use crate::derive::ProstMessage;
 use crate::util::{RegisterRecipient, Wired};
 
 pub struct ProcessRegistry {
@@ -41,15 +40,22 @@ impl Default for ProcessRegistry {
 
 impl SystemService for ProcessRegistry {}
 
+//use crate::proto::process::{ProcessList, ProcessListOwned};
+
 #[derive(prost::Message)]
 pub struct ProcessList {
-    #[prost(string, repeated, tag = "2")]
-    new: Vec<String>,
-    #[prost(string, repeated, tag = "3")]
-    del: Vec<String>,
+    #[prost(bytes, tag = "2")]
+    newids: Vec<u8>,
+    #[prost(bytes, tag = "3")]
+    delids: Vec<u8>,
 }
 
 impl actix::Message for ProcessList { type Result = (); }
+
+fn fold_uuids(mut a: Vec<u8>, u: &Uuid) -> Vec<u8> {
+    a.extend_from_slice(u.as_bytes());
+    a
+}
 
 impl Supervised for ProcessRegistry {
     fn restarting(&mut self, ctx: &mut Self::Context) {
@@ -65,8 +71,8 @@ impl Supervised for ProcessRegistry {
             let del = std::mem::replace(&mut this.deleted, HashSet::new());
 
             let plist = ProcessList {
-                new: new.into_iter().map(|s| s.to_string()).collect(),
-                del: del.into_iter().map(|s| s.to_string()).collect(),
+                newids: new.iter().fold(vec![], fold_uuids),
+                delids: del.iter().fold(vec![], fold_uuids),
             };
 
             let bcast = Broadcast(Dispatch::make_raw_announce(&plist, Uuid::nil()));
@@ -83,13 +89,15 @@ impl Handler<RecvFromNode<ProcessList>> for ProcessRegistry {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 
-        for del in msg.inner.del {
+        for del in msg.inner.delids.array_chunks::<16>() {
+            let del = &Uuid::from_bytes(*del);
             log::info!("Proc: {} no longer running", del);
-            self.nodes.remove(&Uuid::from_str(&del).unwrap());
+            self.nodes.remove(del);
         }
-        for new in msg.inner.new {
+        for new in msg.inner.newids.array_chunks::<16>() {
+            let new = Uuid::from_bytes(*new);
             log::info!("Proc: {} running on {}", new, node);
-            self.nodes.insert(Uuid::from_str(&new).unwrap(), node.clone());
+            self.nodes.insert(new, node);
         }
     }
 }
@@ -102,8 +110,8 @@ impl Handler<NodeUpdate> for ProcessRegistry {
             log::info!("Announcing process list to new node: {}", id);
             let control = NodeControl::from_registry();
             let update = ProcessList {
-                new: self.local.keys().map(|k| k.to_string()).collect(),
-                del: vec![],
+                newids: self.local.keys().fold(vec![], fold_uuids),
+                delids: vec![],
             };
             let msg = SendToNode(id, Dispatch::make_raw_announce(&update, Uuid::nil()));
             let fut = control.send(msg);
@@ -173,7 +181,7 @@ pub struct Dispatch {
     pub id: Uuid,
     pub method: String,
     pub body: Bytes,
-    pub wait_for_response: bool
+    pub wait_for_response: bool,
 }
 
 impl Dispatch {

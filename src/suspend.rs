@@ -2,13 +2,16 @@ use actix::Actor;
 use crate::Process;
 use futures::Future;
 use crate::process::ProcessDispatch;
+use crate::util::Wired;
 
 /// Actor, which can be suspended to disk and woken up by loading it
-pub trait Suspendable: Actor<Context=Process<Self>> + ProcessDispatch + prost::Message {
+pub trait Suspendable: Actor<Context=Process<Self>> + ProcessDispatch {
+    type SuspendState : Wired;
+
     /// Do work before actor is suspended. The returned future will be waited upon, and
     /// will block any further message processing
-    fn on_suspend(&mut self, ctx: &mut Self::Context) -> Box<dyn Future<Output=()>>;
+    fn suspend(&mut self, ctx: &mut Self::Context) -> Box<dyn Future<Output=Self::SuspendState>>;
 
-    /// Resume execution from suspended state
-    fn on_resume(&mut self, ctx: &mut Self::Context);
+    /// Recreate actor from suspended state
+    fn reanimate(state : Self::SuspendState) -> Result<Self, ()>;
 }

@@ -16,7 +16,6 @@ use futures::{FutureExt, TryFutureExt};
 use tokio::macros::support::Pin;
 use futures::task::Poll;
 use std::task;
-use crate::derive::ProstMessage;
 use crate::util::Wired;
 
 pub mod registry;
@@ -247,8 +246,8 @@ where A: Actor + Handler<M>,
 impl<A: Actor, M: Message> Future for PidRequest<A, M>
 where A: Actor + Handler<M>,
       A::Context: ToEnvelope<A, M>,
-      M: Message + ProstMessage + Unpin,
-      M::Result: ProstMessage + Default
+      M: Message + Wired + Unpin + Send,
+      M::Result: Wired  + Send
 {
     type Output = Result<M::Result, DispatchError>;
 
@@ -260,7 +259,7 @@ where A: Actor + Handler<M>,
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M::Result as prost::Message>::decode(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(<M::Result as Wired>::read(res).map_err(|e| DispatchError::Format))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
