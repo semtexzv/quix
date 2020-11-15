@@ -2,7 +2,7 @@ use crate::import::*;
 
 
 use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
-use crate::node::{NodeControl, RegisterGlobalHandler, FromNode, NodeStatus};
+use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeStatus};
 use crate::util::{RegisterRecipient, RpcMethod};
 use crate::proto::{Update, ProcessList, InfoOf};
 use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch};
@@ -45,7 +45,7 @@ fn fold_uuids(mut a: Vec<u8>, u: &Uuid) -> Vec<u8> {
 impl Supervised for ProcessRegistry {
     fn restarting(&mut self, ctx: &mut Self::Context) {
         log::info!("Setting up process registry");
-        let control = NodeControl::from_registry();
+        let control = NodeController::from_registry();
 
         control.do_send(RegisterRecipient(ctx.address().recipient::<NodeStatus>()));
         control.do_send(RegisterGlobalHandler::new::<Update, _>(ctx.address().recipient()));
@@ -67,7 +67,7 @@ impl Supervised for ProcessRegistry {
 
             let bcast = Update(plist).make_broadcast();
 
-            let bcast = NodeControl::from_registry().do_send(bcast);
+            let bcast = NodeController::from_registry().do_send(bcast);
         });
     }
 }
@@ -107,7 +107,7 @@ impl Handler<NodeStatus> for ProcessRegistry {
     fn handle(&mut self, msg: NodeStatus, ctx: &mut Context<Self>) -> Self::Result {
         if let NodeStatus::Connected(id) = msg {
             log::info!("Announcing process list to new node: {}", id);
-            let control = NodeControl::from_registry();
+            let control = NodeController::from_registry();
             let update = ProcessList {
                 newids: self.local.keys().fold(vec![], fold_uuids),
                 delids: vec![],
@@ -185,7 +185,7 @@ impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
                     nodeid: *node,
                     inner: msg.inner,
                 };
-                Response::fut(NodeControl::from_registry().send(msg).map(|x| x.unwrap()))
+                Response::fut(NodeController::from_registry().send(msg).map(|x| x.unwrap()))
             } else {
                 Response::reply(Err(DispatchError::DispatchLocal))
             }

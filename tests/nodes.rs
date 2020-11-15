@@ -1,6 +1,6 @@
 use actix::*;
 use quix::{self};
-use quix::node::{NodeConfig, NodeControl, Connect};
+use quix::node::{NodeConfig, NodeController, Connect};
 use actix::clock::Duration;
 use quix::global::{Global, Set};
 
@@ -14,9 +14,9 @@ fn test_nodes() {
                 listen: "127.0.0.1:9001".parse().unwrap(),
                 ..Default::default()
             })).await.unwrap();
-            NodeControl::from_registry();
+            NodeController::from_registry();
 
-            let link = NodeControl::from_registry().send(Connect {
+            let link = NodeController::from_registry().send(Connect {
                 addr: "127.0.0.1:9002".parse().unwrap()
             }).await.unwrap();
 
@@ -30,7 +30,7 @@ fn test_nodes() {
             ..Default::default()
         })).await.unwrap();
 
-        let link = NodeControl::from_registry().send(Connect {
+        let link = NodeController::from_registry().send(Connect {
             addr: "127.0.0.1:9001".parse().unwrap()
         }).await.unwrap();
 

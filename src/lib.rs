@@ -11,7 +11,7 @@ extern crate derive as _der;
 
 use std::sync::Arc;
 use actix::{Message, SystemService, Actor};
-use crate::node::NodeControl;
+use crate::node::NodeController;
 use bytes::Bytes;
 
 #[doc(hidden)]

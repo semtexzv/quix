@@ -2,7 +2,7 @@ use crate::{
     import::*,
     Broadcast,
     Dispatch,
-    node::NodeControl,
+    node::NodeController,
     node::FromNode,
     node::NodeConfig,
     node::NodeStatus,
@@ -163,7 +163,7 @@ impl NodeLink {
                 procreg.do_send(dispatch);
             }
         } else {
-            let nodecontrol = NodeControl::from_registry();
+            let nodecontrol = NodeController::from_registry();
             let dispatch = FromNode {
                 node_id: self.id,
                 inner: dispatch,
@@ -185,7 +185,7 @@ impl Actor for NodeLink {
     type Context = Context<Self>;
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
-        NodeControl::from_registry().do_send(NodeStatus::Disconnected(self.id));
+        NodeController::from_registry().do_send(NodeStatus::Disconnected(self.id));
     }
 }
 

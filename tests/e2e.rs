@@ -1,4 +1,4 @@
-use quix::node::{NodeConfig, NodeControl, Connect};
+use quix::node::{NodeConfig, NodeController, Connect};
 use actix::{SystemService, Message, Actor, Handler, Running};
 use std::time::Duration;
 use quix::{Process, MethodCall};
@@ -77,7 +77,7 @@ fn make_node(i: i32) -> JoinHandle<()> {
             Global::<NodeConfig>::from_registry().send(Set(config)).await.unwrap();
 
             if i > 0 {
-                let link = NodeControl::from_registry().send(Connect {
+                let link = NodeController::from_registry().send(Connect {
                     addr: format!("127.0.0.1:900{}", i - 1).parse().unwrap()
                 }).await.unwrap();
 

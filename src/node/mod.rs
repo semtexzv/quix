@@ -26,7 +26,33 @@ impl Default for NodeConfig {
     }
 }
 
-pub struct NodeControl {
+pub struct NodeId(pub Uuid);
+
+impl NodeId {
+    pub fn send<M, T>(&self, m: M) -> impl Future<Output=M::Result>
+    where M: RpcMethod + Message<Result=Result<T, DispatchError>>
+    {
+        let nodeid = self.0;
+        async move {
+            let res = NodeController::from_registry().send(NodeDispatch {
+                nodeid,
+                inner: m.make_call(),
+            }).await.map_err(|e| DispatchError::MailboxRemote)??;
+
+            M::read_result(res)
+        }
+    }
+    pub fn do_send<M>(&self, m: M)
+    where M: RpcMethod
+    {
+        NodeController::from_registry().do_send(NodeDispatch {
+            nodeid: self.0,
+            inner: m.make_announcement(),
+        })
+    }
+}
+
+pub struct NodeController {
     /// Links to other nodes
     links: HashMap<Uuid, Addr<NodeLink>>,
     /// Dispatcher for unaddressed messages.
@@ -37,9 +63,9 @@ pub struct NodeControl {
     pub status_listeners: HashMap<Uuid, Recipient<NodeStatus>>,
 }
 
-impl SystemService for NodeControl {}
+impl SystemService for NodeController {}
 
-impl Supervised for NodeControl {
+impl Supervised for NodeController {
     fn restarting(&mut self, ctx: &mut Self::Context) {
         // Ensure process registry is initialized
         ProcessRegistry::from_registry();
@@ -62,9 +88,9 @@ impl Supervised for NodeControl {
     }
 }
 
-impl Default for NodeControl {
+impl Default for NodeController {
     fn default() -> Self {
-        NodeControl {
+        NodeController {
             links: HashMap::new(),
             dispatch: HashMap::new(),
             status_listeners: HashMap::new(),
@@ -72,7 +98,7 @@ impl Default for NodeControl {
     }
 }
 
-impl Actor for NodeControl {
+impl Actor for NodeController {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
@@ -80,7 +106,7 @@ impl Actor for NodeControl {
     }
 }
 
-impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
+impl StreamHandler<std::io::Result<TcpStream>> for NodeController {
     fn handle(&mut self, item: std::io::Result<TcpStream>, ctx: &mut Context<Self>) {
         let item = item.expect("Fatal error in NodeControl");
 
@@ -105,7 +131,7 @@ pub enum NodeStatus {
 
 impl Message for NodeStatus { type Result = (); }
 
-impl Handler<NodeStatus> for NodeControl {
+impl Handler<NodeStatus> for NodeController {
     type Result = ();
 
     fn handle(&mut self, msg: NodeStatus, ctx: &mut Self::Context) -> Self::Result {
@@ -118,7 +144,7 @@ impl Handler<NodeStatus> for NodeControl {
     }
 }
 
-impl Handler<RegisterRecipient<NodeStatus>> for NodeControl {
+impl Handler<RegisterRecipient<NodeStatus>> for NodeController {
     type Result = Result<Uuid, std::convert::Infallible>;
 
     fn handle(&mut self, msg: RegisterRecipient<NodeStatus>, ctx: &mut Self::Context) -> Self::Result {
@@ -137,7 +163,7 @@ impl Message for Connect {
     type Result = Addr<NodeLink>;
 }
 
-impl Handler<Connect> for NodeControl {
+impl Handler<Connect> for NodeController {
     type Result = ResponseActFuture<Self, Addr<NodeLink>>;
 
     fn handle(&mut self, msg: Connect, ctx: &mut Self::Context) -> Self::Result {
@@ -158,7 +184,7 @@ impl Handler<Connect> for NodeControl {
     }
 }
 
-impl Handler<NodeDispatch<MethodCall>> for NodeControl {
+impl Handler<NodeDispatch<MethodCall>> for NodeController {
     type Result = actix::Response<Bytes, DispatchError>;
 
     fn handle(&mut self, msg: NodeDispatch<MethodCall>, ctx: &mut Self::Context) -> Self::Result {
@@ -177,7 +203,7 @@ impl Handler<NodeDispatch<MethodCall>> for NodeControl {
 }
 
 
-impl Handler<NodeDispatch<Broadcast>> for NodeControl {
+impl Handler<NodeDispatch<Broadcast>> for NodeController {
     type Result = Result<(), DispatchError>;
 
     fn handle(&mut self, msg: NodeDispatch<Broadcast>, ctx: &mut Self::Context) -> Self::Result {
@@ -192,7 +218,7 @@ impl Handler<NodeDispatch<Broadcast>> for NodeControl {
 }
 
 
-impl Handler<Broadcast> for NodeControl {
+impl Handler<Broadcast> for NodeController {
     type Result = Result<(), DispatchError>;
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
@@ -203,7 +229,7 @@ impl Handler<Broadcast> for NodeControl {
     }
 }
 
-impl Handler<FromNode<MethodCall>> for NodeControl {
+impl Handler<FromNode<MethodCall>> for NodeController {
     type Result = Response<Bytes, DispatchError>;
 
     fn handle(&mut self, msg: FromNode<MethodCall>, ctx: &mut Self::Context) -> Self::Result {
@@ -271,7 +297,7 @@ impl Message for RegisterGlobalHandler {
     type Result = ();
 }
 
-impl Handler<RegisterGlobalHandler> for NodeControl {
+impl Handler<RegisterGlobalHandler> for NodeController {
     type Result = ();
 
     fn handle(&mut self, msg: RegisterGlobalHandler, ctx: &mut Context<Self>) -> Self::Result {

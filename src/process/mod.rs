@@ -1,7 +1,7 @@
 use crate::import::*;
 
 use crate::process::registry::{ProcessRegistry, Register, Unregister};
-use crate::node::NodeControl;
+use crate::node::NodeController;
 use crate::util::RpcMethod;
 
 use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
