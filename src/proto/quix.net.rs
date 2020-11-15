@@ -35,8 +35,8 @@ pub struct Response {
     #[prost(int64, required, tag="1")]
     pub correlation: i64,
     /// TODO: make required
-    #[prost(bytes, required, tag="2")]
-    pub body: std::vec::Vec<u8>,
+    #[prost(bytes, optional, tag="2")]
+    pub body: ::std::option::Option<std::vec::Vec<u8>>,
     #[prost(enumeration="InvokeError", optional, tag="3")]
     pub error: ::std::option::Option<i32>,
 }
@@ -44,9 +44,9 @@ pub struct Response {
 #[repr(i32)]
 pub enum InvokeError {
     /// Process for invocation was not found
-    ProcNotFound = 1,
+    ProcessNotFound = 1,
     /// Invocation target could not handle this method
-    HandlerNotFound = 2,
+    MethodNotFound = 2,
     /// Node specified in the message could not be found
     NodeNotFound = 3,
     /// Invocation args could not be deserialized

@@ -1,12 +1,14 @@
 use quix::node::{NodeConfig, NodeControl, Connect};
 use actix::{SystemService, Message, Actor, Handler, Running};
 use std::time::Duration;
-use quix::Process;
+use quix::{Process, MethodCall};
 use std::thread::JoinHandle;
 use quix::global::{Global, Set};
 use quix::util::RpcMethod;
 use bytes::{Buf, BufMut};
 use quix::process::DispatchError;
+use quix::proto::{InfoOf, Pid};
+use quix::memkv::MemKv;
 
 
 #[derive(prost::Message)]
@@ -31,7 +33,7 @@ impl RpcMethod for M {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Result<Self::Result, DispatchError> {
+    fn read_result(b: impl Buf) -> Self::Result {
         unimplemented!()
     }
 
@@ -39,6 +41,7 @@ impl RpcMethod for M {
         unimplemented!()
     }
 }
+
 #[derive(quix::DynHandler)]
 #[dispatch(M)]
 pub struct Act {}
@@ -77,6 +80,12 @@ fn make_node(i: i32) -> JoinHandle<()> {
                 let link = NodeControl::from_registry().send(Connect {
                     addr: format!("127.0.0.1:900{}", i - 1).parse().unwrap()
                 }).await.unwrap();
+
+
+                println!("Calling node ");
+                let req: MethodCall = InfoOf(Pid { id: vec![] }).make_call();
+                let res = tokio::time::timeout(Duration::from_secs(1), link.send(req)).await.unwrap().unwrap().unwrap();
+                println!("Res: {:?}", res)
             }
 
             let m1 = Process::start(Act {});

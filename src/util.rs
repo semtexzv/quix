@@ -19,7 +19,7 @@ pub trait RpcMethod: Sized + Message {
     fn read(b: impl Buf) -> Result<Self, DispatchError>;
     fn write(&self, b: &mut impl BufMut) -> Result<(), DispatchError>;
 
-    fn read_result(b: impl Buf) -> Result<Self::Result,  DispatchError>;
+    fn read_result(b: impl Buf) -> Self::Result;
     fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), DispatchError>;
 
     fn to_buf(&self) -> Result<Bytes, DispatchError> {
@@ -36,11 +36,10 @@ pub trait RpcMethod: Sized + Message {
     }
 
 
-    fn make_announcement(&self) -> MethodCall {
-        MethodCall {
+    fn make_announcement(&self) -> Broadcast {
+        Broadcast {
             body: RpcMethod::to_buf(self).unwrap(),
             method: Self::ID,
-            wait_for_response: false,
         }
     }
 
@@ -48,7 +47,6 @@ pub trait RpcMethod: Sized + Message {
         MethodCall {
             body: RpcMethod::to_buf(self).unwrap(),
             method: Self::ID,
-            wait_for_response: true,
         }
     }
 }

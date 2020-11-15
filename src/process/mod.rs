@@ -13,11 +13,41 @@ pub mod registry;
 
 #[derive(Debug)]
 pub enum DispatchError {
+    ProcessNotFound = 1,
+    MethodNotFound = 2,
+    NodeNotFound = 3,
+    MessageFormat,
     Timeout,
+
     DispatchRemote,
     DispatchLocal,
     MailboxRemote,
-    Format,
+
+}
+
+impl DispatchError {
+    pub fn code(&self) -> i32 {
+        use DispatchError::*;
+        match self {
+            ProcessNotFound => 1,
+            MethodNotFound => 2,
+            NodeNotFound => 3,
+            MessageFormat => 4,
+            Timeout => 5,
+            _ => 99
+        }
+    }
+    pub fn from_code(v: i32) -> Self {
+        use DispatchError::*;
+        match v {
+            1 => ProcessNotFound,
+            2 => MethodNotFound,
+            3 => NodeNotFound,
+            4 => MessageFormat,
+            5 => Timeout,
+            _ => DispatchRemote
+        }
+    }
 }
 
 /// Trait used to get generic dispatchers for different actors
@@ -271,7 +301,7 @@ where A: Actor + Handler<M>,
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M as RpcMethod>::read_result(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(Ok(<M as RpcMethod>::read_result(res)))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
@@ -366,7 +396,7 @@ where M: Message + RpcMethod + Unpin + Send,
             Self::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M as RpcMethod>::read_result(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(Ok(<M as RpcMethod>::read_result(res)))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),

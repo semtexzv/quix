@@ -4,7 +4,7 @@ use crate::import::*;
 use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
 use crate::node::{NodeControl, RegisterGlobalHandler, FromNode, NodeStatus};
 use crate::util::{RegisterRecipient, RpcMethod};
-use crate::proto::{Update, ProcessList};
+use crate::proto::{Update, ProcessList, InfoOf};
 use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch};
 
 pub struct ProcessRegistry {
@@ -48,7 +48,8 @@ impl Supervised for ProcessRegistry {
         let control = NodeControl::from_registry();
 
         control.do_send(RegisterRecipient(ctx.address().recipient::<NodeStatus>()));
-        control.do_send(RegisterGlobalHandler::new::<Update>(ctx.address().recipient()));
+        control.do_send(RegisterGlobalHandler::new::<Update, _>(ctx.address().recipient()));
+        control.do_send(RegisterGlobalHandler::new::<InfoOf, _>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
             if this.new.is_empty() && this.deleted.is_empty() {
@@ -66,9 +67,16 @@ impl Supervised for ProcessRegistry {
 
             let bcast = Update(plist).make_broadcast();
 
-            let bcast = NodeControl::from_registry().send(bcast);
-            ctx.spawn(wrap_future(async move { bcast.await.unwrap() }));
+            let bcast = NodeControl::from_registry().do_send(bcast);
         });
+    }
+}
+
+impl Handler<FromNode<InfoOf>> for ProcessRegistry {
+    type Result = Result<crate::proto::Pid, DispatchError>;
+
+    fn handle(&mut self, msg: FromNode<InfoOf>, ctx: &mut Context<Self>) -> Self::Result {
+        Ok(crate::proto::Pid { id: Vec::new() })
     }
 }
 

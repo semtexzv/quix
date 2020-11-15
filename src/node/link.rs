@@ -12,14 +12,12 @@ use crate::{
     proto::Response,
     proto::PingPong,
     process::registry::ProcessRegistry,
-    process::DispatchError,
     global::Global,
     global::Get,
     util::RpcMethod,
     util::uuid,
     MethodCall,
     ProcDispatch,
-    proto::InvokeError,
 };
 
 use std::io;
@@ -30,6 +28,7 @@ use tokio::{
 };
 use actix::Running;
 use futures::io::Error;
+use crate::process::DispatchError;
 
 
 pub struct NodeLink {
@@ -122,10 +121,15 @@ impl NodeLink {
     }
 
     fn handle_return_correlation(&mut self, ctx: &mut Context<Self>, res: Result<Bytes, DispatchError>, corr: i64) {
+        let (ok, err) = match res {
+            Ok(v) => (Some(v.to_vec()), None),
+            Err(e) => (None, Some(e.code())),
+        };
+
         let res = Response {
             correlation: corr,
-            body: res.unwrap().to_vec(),
-            error: None,
+            body: ok,
+            error: err,
         };
         let msg = Net {
             response: Some(res),
@@ -142,7 +146,6 @@ impl NodeLink {
         let dispatch = MethodCall {
             method: req.methodid,
             body: Bytes::from(req.body),
-            wait_for_response: req.correlation.is_some(),
         };
         if let Some(procid) = procid {
             let procreg = ProcessRegistry::from_registry();
@@ -166,17 +169,14 @@ impl NodeLink {
                 inner: dispatch,
             };
 
-            nodecontrol.do_send(dispatch);
-            // TODO: We need to somehow handle returns in node-wide requests
-            /*
             if let Some(corr) = req.correlation {
                 let work = wrap_future(nodecontrol.send(dispatch).map(|r| r.unwrap()));
                 let work = work.map(move |res, this: &mut Self, ctx| this.handle_return_correlation(ctx, res, corr));
                 ctx.spawn(work);
             } else {
+                nodecontrol.do_send(dispatch);
                 // Without process ID, we currently only handle notifications
-
-            }*/
+            }
         }
     }
 }
@@ -223,7 +223,15 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
 
         if let Some(res) = msg.response {
             if let Some(tx) = self.running.remove(&res.correlation) {
-                let _ = tx.send(Ok(Bytes::from(res.body)));
+                if let Some(err) = res.error {
+                    // TODO: Error from i32
+                    let _ = tx.send(Err(DispatchError::from_code(err)));
+                } else if let Some(body) = res.body {
+                    let _ = tx.send(Ok(Bytes::from(body)));
+                } else {
+                    log::error!("Received response without error or body");
+                    let _ = tx.send(Err(DispatchError::DispatchRemote));
+                }
             } else {
                 log::error!("Missing correlation id: {}", res.correlation)
             }
@@ -232,7 +240,7 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
 }
 
 impl Handler<Broadcast> for NodeLink {
-    type Result = ();
+    type Result = Result<(), DispatchError>;
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
         let mut req = Request {
@@ -249,6 +257,7 @@ impl Handler<Broadcast> for NodeLink {
         };
 
         self.stream.write(netreq);
+        Ok(())
     }
 }
 
@@ -277,7 +286,8 @@ impl Handler<MethodCall> for NodeLink {
         };
 
         self.stream.write(net);
-        let fut = tokio::time::timeout(Duration::from_secs(10), rx);
+        // Safety timeout
+        let fut = tokio::time::timeout(Duration::from_secs(60), rx);
         actix::Response::fut(fut
             .map_err(|_| DispatchError::Timeout)
             .map(|v| v.map(|v| v.map_err(|_| DispatchError::MailboxRemote))??)

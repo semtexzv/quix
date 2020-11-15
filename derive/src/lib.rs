@@ -44,7 +44,7 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
         let id = quote! { #p::ID };
         let block = quote! {
         {
-            let msg = <#p as RpcMethod>::read(data).map_err(|_| quix::derive::DispatchError::Format);
+            let msg = <#p as RpcMethod>::read(data).map_err(|_| quix::derive::DispatchError::MessageFormat);
             Box::pin(async move {
                 let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
                 let mut buf = quix::derive::BytesMut::new();

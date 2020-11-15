@@ -9,7 +9,7 @@ impl prost_build::ServiceGenerator for Generator {
         for m in service.methods {
             eprintln!("{:?}", m);
             let output = if m.output_proto_type == ".google.protobuf.Empty" {
-                "()".to_string()
+                "Result<(), DispatchError>".to_string()
             } else {
                 format!("Result<{}, DispatchError>", m.output_type)
             };
@@ -24,7 +24,7 @@ impl prost_build::ServiceGenerator for Generator {
             let (out_read, out_write) = if m.output_proto_type == ".google.protobuf.Empty" {
                 ("()".to_string(), "()".to_string())
             } else {
-                (format!("Ok(<{}>::decode(b).unwrap())", m.output_type),
+                (format!("<{}>::decode(b).unwrap()", m.output_type),
                  format!("let a: &{o} = res.as_ref().unwrap(); a.encode(b).unwrap()", o = m.output_type)
                 )
             };
@@ -47,13 +47,13 @@ impl quix::derive::RpcMethod for {name} {{
     const ID: u32 = {svc_id};
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{
-        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::Format)
+        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)
     }}
     fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> {{
-        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::Format)?))
+        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::MessageFormat)?))
     }}
 
-    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, DispatchError> {{
+    fn read_result(b: impl bytes::Buf) -> Self::Result {{
         Ok({out_read})
     }}
 

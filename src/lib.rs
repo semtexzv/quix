@@ -17,10 +17,12 @@ use bytes::Bytes;
 #[doc(hidden)]
 pub mod derive {
     pub use futures::future::BoxFuture;
-    pub use crate::process::{DynHandler, Dispatcher, DispatchError};
-    pub use crate::util::RpcMethod;
     pub use bytes::{BytesMut, Bytes};
     pub use prost::Message as ProstMessage;
+
+    pub use crate::process::{DynHandler, Dispatcher};
+    pub use crate::util::RpcMethod;
+    pub use crate::process::DispatchError;
 }
 
 pub use _der::DynHandler;
@@ -55,7 +57,9 @@ impl Broadcast {
     }
 }
 
-impl Message for Broadcast { type Result = (); }
+impl Message for Broadcast {
+    type Result = Result<(), DispatchError>;
+}
 
 /*
 pub struct ToNode(pub Uuid, pub Dispatch);
@@ -104,7 +108,6 @@ where M: Message<Result=Result<R, DispatchError>> + 'static,
 pub struct MethodCall {
     pub(crate) method: u32,
     pub(crate) body: Bytes,
-    pub(crate) wait_for_response: bool,
 }
 
 impl Message for MethodCall {

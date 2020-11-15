@@ -32,14 +32,14 @@ impl quix::derive::RpcMethod for Get {
     const ID: u32 = 2761597858;
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
-        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::Format)
+        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)
     }
     fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> {
-        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::Format)?))
+        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::MessageFormat)?))
     }
 
-    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, DispatchError> {
-        Ok(Ok(<Value>::decode(b).unwrap()))
+    fn read_result(b: impl bytes::Buf) -> Self::Result {
+        Ok(<Value>::decode(b).unwrap())
     }
 
     fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {

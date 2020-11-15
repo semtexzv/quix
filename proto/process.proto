@@ -16,4 +16,5 @@ message ProcessList {
 
 service Process {
   rpc Update(ProcessList) returns (google.protobuf.Empty);
+  rpc InfoOf(Pid) returns (Pid);
 }

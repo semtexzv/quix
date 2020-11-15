@@ -4,13 +4,17 @@ package quix.net;
 
 enum InvokeError {
   // Process for invocation was not found
-  ProcNotFound = 1;
+  ProcessNotFound = 1;
+
   // Invocation target could not handle this method
-  HandlerNotFound = 2;
+  MethodNotFound = 2;
+
   // Node specified in the message could not be found
   NodeNotFound = 3;
+
   // Invocation args could not be deserialized
   MessageFormat = 4;
+
   // Not sent but used internally, message handling timed out.
   Timeout = 5;
 }
@@ -42,6 +46,6 @@ message Request {
 message Response {
   required int64 correlation = 1;
   // TODO: make required
-  required bytes body = 2;
+  optional bytes body = 2;
   optional InvokeError error = 3;
 }

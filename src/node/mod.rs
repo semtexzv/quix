@@ -6,9 +6,10 @@ mod link;
 use crate::node::link::NodeLink;
 use crate::util::{RegisterRecipient, RpcMethod};
 use crate::global::{Get, Global};
-use crate::process::{DispatchError, Dispatcher};
+use crate::process::{Dispatcher, DispatchError};
 use tokio::net::TcpStream;
 use crate::{Broadcast, Dispatch, NodeDispatch, MethodCall};
+use crate::process::registry::ProcessRegistry;
 
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
@@ -40,6 +41,9 @@ impl SystemService for NodeControl {}
 
 impl Supervised for NodeControl {
     fn restarting(&mut self, ctx: &mut Self::Context) {
+        // Ensure process registry is initialized
+        ProcessRegistry::from_registry();
+
         let cfg = Global::<NodeConfig>::from_registry().send(Get::default());
         let set_cfg = wrap_future(cfg)
             .then(|cfg, this: &mut Self, ctx| {
@@ -173,31 +177,46 @@ impl Handler<NodeDispatch<MethodCall>> for NodeControl {
 }
 
 
+impl Handler<NodeDispatch<Broadcast>> for NodeControl {
+    type Result = Result<(), DispatchError>;
+
+    fn handle(&mut self, msg: NodeDispatch<Broadcast>, ctx: &mut Self::Context) -> Self::Result {
+        if let Some(link) = self.links.get(&msg.nodeid) {
+            let link = link.clone();
+            link.do_send(msg.inner);
+            Ok(())
+        } else {
+            Err(DispatchError::NodeNotFound)
+        }
+    }
+}
+
+
 impl Handler<Broadcast> for NodeControl {
-    type Result = ();
+    type Result = Result<(), DispatchError>;
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
         for n in self.links.values() {
             n.do_send(msg.clone());
         }
+        Ok(())
     }
 }
 
 impl Handler<FromNode<MethodCall>> for NodeControl {
-    type Result = Result<(), DispatchError>;
+    type Result = Response<Bytes, DispatchError>;
 
     fn handle(&mut self, msg: FromNode<MethodCall>, ctx: &mut Self::Context) -> Self::Result {
         log::info!("NodeControl dispatching unadressed message");
         match self.dispatch.get_mut(&msg.inner.method) {
             Some(m) => {
-                let fut = (m)(msg.node_id, msg.inner.body);
-                ctx.spawn(wrap_future(async move { fut.await.unwrap(); }));
+                Response::fut((m)(msg.node_id, msg.inner.body))
             }
             None => {
                 log::warn!("Message: {} not handled by any global handler", msg.inner.method);
+                return Response::reply(Err(DispatchError::MethodNotFound));
             }
         }
-        Ok(())
     }
 }
 
@@ -207,9 +226,10 @@ pub struct FromNode<M> {
     pub inner: M,
 }
 
-impl<M> Message for FromNode<M> {
-    type Result = Result<(), DispatchError>;
+impl<M: Message> Message for FromNode<M> {
+    type Result = M::Result;
 }
+
 
 pub type NodeHandler = Box<dyn FnMut(Uuid, Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>> + Send>;
 
@@ -220,20 +240,23 @@ pub struct RegisterGlobalHandler {
 
 impl RegisterGlobalHandler {
     /// Create new registration request for node-wide handler
-    pub fn new<M>(rec: Recipient<FromNode<M>>) -> Self
-    where M: actix::Message<Result=()> + RpcMethod + Send + 'static,
+    pub fn new<M, T>(rec: Recipient<FromNode<M>>) -> Self
+    where M: actix::Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
+          T: prost::Message + Send + 'static
     {
         let handler = move |node_id, data| -> BoxFuture<'static, _> {
             log::info!("Running global message handler");
             let rec = rec.clone();
             Box::pin(async move {
-                let msg = M::read(data).map_err(|_| DispatchError::Format)?;
+                let msg = M::read(data).map_err(|_| DispatchError::MessageFormat)?;
                 let msg = FromNode {
                     node_id,
                     inner: msg,
                 };
-                let res = rec.send(msg).await.map_err(|_| DispatchError::Format)?;
-                Ok(Bytes::new())
+                let res = rec.send(msg).await.map_err(|_| DispatchError::MessageFormat)??;
+                let mut buf = BytesMut::new();
+                T::encode(&res, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+                Ok(buf.freeze())
             })
         };
 

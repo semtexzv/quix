@@ -2,7 +2,7 @@ use crate::import::*;
 use crate::proto::{Get, Value};
 use crate::Process;
 use crate::process::DispatchError;
-
+use crate::node::{NodeControl, RegisterGlobalHandler, FromNode};
 
 pub struct Write {
     key: Vec<u8>,
@@ -12,11 +12,10 @@ pub struct Write {
 impl Message for Write { type Result = (); }
 
 impl Write {
-    pub fn new<MK : prost::Message, MV : prost::Message>(k : MK, v : MV) -> Self {
-
+    pub fn new<MK: prost::Message, MV: prost::Message>(k: MK, v: MV) -> Self {
         let mut res = Write {
             key: vec![],
-            value: vec![]
+            value: vec![],
         };
 
         k.encode(&mut res.key).unwrap();
@@ -34,11 +33,13 @@ pub struct MemKv {
 
 impl Actor for MemKv {
     type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        NodeControl::from_registry().do_send(RegisterGlobalHandler::new::<Get, _>(ctx.address().recipient()));
+    }
 }
 
-impl Supervised for MemKv {
-
-}
+impl Supervised for MemKv {}
 
 impl SystemService for MemKv {}
 
@@ -59,5 +60,16 @@ impl Handler<Get> for MemKv {
             data: data.cloned()
         };
         Ok(res)
+    }
+}
+
+impl Handler<FromNode<Get>> for MemKv {
+    type Result = Result<crate::proto::Value, DispatchError>;
+
+    fn handle(&mut self, msg: FromNode<Get>, ctx: &mut Self::Context) -> Self::Result {
+        let res = self.data.get(&msg.inner.0.data).map(|v| v.to_vec());
+        Ok(crate::proto::Value {
+            data: res
+        })
     }
 }
