@@ -201,6 +201,9 @@ impl<A: Actor + DynHandler> Clone for Pid<A> {
 }
 
 impl<A: Actor + DynHandler> Pid<A> {
+    pub fn from(uuid: Uuid) -> Self {
+        Self::Remote(uuid)
+    }
     pub fn local_addr(&self) -> Option<Addr<A>> {
         match self {
             Pid::Local { addr, .. } => Some(addr.clone()),
@@ -244,7 +247,7 @@ impl<A: Actor + DynHandler> Pid<A> {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
-                let dispatch = m.make_call();
+                let dispatch = m.make_broadcast();
                 let dispatch = ProcDispatch {
                     procid: *id,
                     inner: dispatch,

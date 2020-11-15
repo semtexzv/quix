@@ -35,14 +35,6 @@ pub trait RpcMethod: Sized + Message {
         }
     }
 
-
-    fn make_announcement(&self) -> Broadcast {
-        Broadcast {
-            body: RpcMethod::to_buf(self).unwrap(),
-            method: Self::ID,
-        }
-    }
-
     fn make_call(&self) -> MethodCall {
         MethodCall {
             body: RpcMethod::to_buf(self).unwrap(),

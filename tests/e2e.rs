@@ -1,15 +1,14 @@
-use quix::node::{NodeConfig, NodeController, Connect};
+use quix::node::{NodeConfig, NodeController, Connect, NodeId};
 use actix::{SystemService, Message, Actor, Handler, Running};
 use std::time::Duration;
-use quix::{Process, MethodCall};
+use quix::{Process};
 use std::thread::JoinHandle;
 use quix::global::{Global, Set};
 use quix::util::RpcMethod;
 use bytes::{Buf, BufMut};
 use quix::process::DispatchError;
-use quix::proto::{InfoOf, Pid};
-use quix::memkv::MemKv;
 
+use quix::proto::*;
 
 #[derive(prost::Message)]
 pub struct M {
@@ -77,21 +76,15 @@ fn make_node(i: i32) -> JoinHandle<()> {
             Global::<NodeConfig>::from_registry().send(Set(config)).await.unwrap();
 
             if i > 0 {
-                let link = NodeController::from_registry().send(Connect {
+                let _ = NodeController::from_registry().send(Connect {
                     addr: format!("127.0.0.1:900{}", i - 1).parse().unwrap()
                 }).await.unwrap();
-
-
-                println!("Calling node ");
-                let req: MethodCall = InfoOf(Pid { id: vec![] }).make_call();
-                let res = tokio::time::timeout(Duration::from_secs(1), link.send(req)).await.unwrap().unwrap().unwrap();
-                println!("Res: {:?}", res)
             }
 
-            let m1 = Process::start(Act {});
+            let _ = Process::start(Act {});
             // m2 should be deleted after the end of the block
             {
-                let m2 = Process::start(Act {});
+                let _ = Process::start(Act {});
                 tokio::time::delay_for(Duration::from_secs(1)).await;
             }
 

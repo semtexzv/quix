@@ -47,7 +47,7 @@ impl NodeId {
     {
         NodeController::from_registry().do_send(NodeDispatch {
             nodeid: self.0,
-            inner: m.make_announcement(),
+            inner: m.make_broadcast(),
         })
     }
 }
@@ -184,6 +184,7 @@ impl Handler<Connect> for NodeController {
     }
 }
 
+// Per node broadcast, understood as calling default handler of method from node
 impl Handler<NodeDispatch<MethodCall>> for NodeController {
     type Result = actix::Response<Bytes, DispatchError>;
 
@@ -217,7 +218,7 @@ impl Handler<NodeDispatch<Broadcast>> for NodeController {
     }
 }
 
-
+// Global broadcast
 impl Handler<Broadcast> for NodeController {
     type Result = Result<(), DispatchError>;
 
@@ -229,6 +230,7 @@ impl Handler<Broadcast> for NodeController {
     }
 }
 
+// Remote node calling us
 impl Handler<FromNode<MethodCall>> for NodeController {
     type Result = Response<Bytes, DispatchError>;
 

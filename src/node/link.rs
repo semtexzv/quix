@@ -164,6 +164,7 @@ impl NodeLink {
             }
         } else {
             let nodecontrol = NodeController::from_registry();
+
             let dispatch = FromNode {
                 node_id: self.id,
                 inner: dispatch,
@@ -174,6 +175,7 @@ impl NodeLink {
                 let work = work.map(move |res, this: &mut Self, ctx| this.handle_return_correlation(ctx, res, corr));
                 ctx.spawn(work);
             } else {
+                // Err, here it should be a broadcast
                 nodecontrol.do_send(dispatch);
                 // Without process ID, we currently only handle notifications
             }

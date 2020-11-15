@@ -2,23 +2,26 @@
 
 use std::fmt::Write;
 
-pub struct Generator;
+pub struct Generator {
+    gen_addr_traits: bool,
+}
+
+pub fn generator(gen_addr_traits: bool) -> Box<dyn prost_build::ServiceGenerator> {
+    Box::new(Generator {
+        gen_addr_traits
+    })
+}
 
 impl prost_build::ServiceGenerator for Generator {
     fn generate(&mut self, service: Service, buf: &mut String) {
-        for m in service.methods {
-            eprintln!("{:?}", m);
-            let output = if m.output_proto_type == ".google.protobuf.Empty" {
-                "Result<(), DispatchError>".to_string()
-            } else {
-                format!("Result<{}, DispatchError>", m.output_type)
-            };
+        write!(buf, r#"use quix::derive::*;"#).unwrap();
+        //let svcname = &service.name;
 
-            let intype = if m.input_proto_type == ".google.protobuf.Empty" {
-                "()".to_string()
-            } else {
-                m.input_type
-            };
+        for m in service.methods {
+            let methodname = &m.name;
+            let name = &m.proto_name;
+            let rettype = format!("Result<{}, DispatchError>", m.output_type);
+            let input = &m.input_type;
 
             // TODO: Fix this crap
             let (out_read, out_write) = if m.output_proto_type == ".google.protobuf.Empty" {
@@ -30,21 +33,39 @@ impl prost_build::ServiceGenerator for Generator {
             };
 
 
-            let svc_spec = format!("{}.{}.{}", service.package, service.name, m.name);
-            let svc_id = crc::crc32::checksum_ieee(svc_spec.as_bytes());
+            let callspec = format!("{}.{}.{}", service.package, service.name, m.name);
+            let callid = crc::crc32::checksum_ieee(callspec.as_bytes());
 
-            write!(buf, r#"
+            if self.gen_addr_traits {
+                write!(buf, r#"
 use quix::derive::*;
 pub struct {name}(pub {input});
 
+pub trait {name}Addr {{
+    fn {methodname}(&self, arg: {input}) -> BoxFuture<'static, {rettype}>;
+}}
+
+impl<A> {name}Addr for Pid<A> where A: Handler<{name}> + DynHandler {{
+    fn {methodname}(&self, arg: {input}) -> BoxFuture<'static, {rettype}> {{
+        Box::pin(self.send({name}(arg)).map(|r| r.and_then(|r|r) ))
+    }}
+}}
+impl {name}Addr for NodeId {{
+    fn {methodname}(&self, arg: {input}) ->BoxFuture<'static, {rettype}> {{
+        Box::pin(self.send({name}(arg)))
+    }}
+}}
+"#).unwrap();
+            }
+            write!(buf, r#"
 impl actix::Message for {name} {{
-    type Result = {output};
+    type Result = {rettype};
 }}
 
 impl quix::derive::RpcMethod for {name} {{
 
-    const NAME: &'static str = "{svc_spec}";
-    const ID: u32 = {svc_id};
+    const NAME: &'static str = "{callspec}";
+    const ID: u32 = {callid};
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{
         prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)
@@ -86,10 +107,7 @@ impl ::core::ops::DerefMut for {name} {{
         &mut self.0
     }}
 }}
-            "#,
-                   name = m.proto_name,
-                   input = intype
-            ).unwrap();
+            "#).unwrap();
         }
     }
 }

@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     //panic!("{:?}", files);
     quix_build::Config::new()
-        .service_generator(Box::new(quix_build::Generator))
+        .service_generator(quix_build::generator(true))
         .compile_protos(
             &files,
             &[PathBuf::from("./proto")]).unwrap();

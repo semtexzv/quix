@@ -18,9 +18,24 @@ pub struct Entry {
     #[prost(message, required, tag="2")]
     pub value: Value,
 }
-
+use quix::derive::*;
 use quix::derive::*;
 pub struct Get(pub Key);
+
+pub trait GetAddr {
+    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>>;
+}
+
+impl<A> GetAddr for Pid<A> where A: Handler<Get> + DynHandler {
+    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>> {
+        Box::pin(self.send(Get(arg)).map(|r| r.and_then(|r|r) ))
+    }
+}
+impl GetAddr for NodeId {
+    fn get(&self, arg: Key) ->BoxFuture<'static, Result<Value, DispatchError>> {
+        Box::pin(self.send(Get(arg)))
+    }
+}
 
 impl actix::Message for Get {
     type Result = Result<Value, DispatchError>;

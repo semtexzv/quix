@@ -1,3 +1,4 @@
+#![feature(type_alias_impl_trait)]
 #![feature(trait_alias)]
 #![feature(core_intrinsics)]
 #![feature(array_chunks)]
@@ -16,11 +17,14 @@ use bytes::Bytes;
 
 #[doc(hidden)]
 pub mod derive {
+    pub use futures::FutureExt;
+    pub use actix::prelude::*;
     pub use futures::future::BoxFuture;
     pub use bytes::{BytesMut, Bytes};
     pub use prost::Message as ProstMessage;
 
-    pub use crate::process::{DynHandler, Dispatcher};
+    pub use crate::process::{Pid, DynHandler, Dispatcher};
+    pub use crate::node::NodeId;
     pub use crate::util::RpcMethod;
     pub use crate::process::DispatchError;
 }

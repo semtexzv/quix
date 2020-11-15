@@ -3,11 +3,6 @@ package quix.process;
 
 import "google/protobuf/empty.proto";
 
-message Pid {
-  bytes id = 1;
-}
-
-
 // List of created/deleted process ids
 message ProcessList {
   bytes newids = 2;
@@ -16,5 +11,4 @@ message ProcessList {
 
 service Process {
   rpc Update(ProcessList) returns (google.protobuf.Empty);
-  rpc InfoOf(Pid) returns (Pid);
 }

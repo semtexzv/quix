@@ -3,7 +3,7 @@ members = [".", "derive", "builder"]
 
 [package]
 name = "quix"
-version = "0.0.6"
+version = "0.0.7"
 description = "Distribution layer for actix"
 authors = ["Michal Hornicky <semtexzv@gmail.com>"]
 edition = "2018"
@@ -12,10 +12,10 @@ license = "MIT"
 build = "build.rs"
 
 [build-dependencies]
-quix-build = { path = "./builder", version = "0.0.6", package = "quix-build" }
+quix-build = { path = "./builder", version = "0.0.7", package = "quix-build" }
 
 [dependencies]
-derive = { path = "./derive", version = "0.0.6", package = "quix-derive" }
+derive = { path = "./derive", version = "0.0.7", package = "quix-derive" }
 
 anyhow = "1.0.34"
 uuid = { version = "0.8", features = ["v4"] }

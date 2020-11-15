@@ -4,8 +4,8 @@ use crate::import::*;
 use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
 use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeStatus};
 use crate::util::{RegisterRecipient, RpcMethod};
-use crate::proto::{Update, ProcessList, InfoOf};
-use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch};
+use crate::proto::{Update, ProcessList};
+use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch, Broadcast};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -49,7 +49,6 @@ impl Supervised for ProcessRegistry {
 
         control.do_send(RegisterRecipient(ctx.address().recipient::<NodeStatus>()));
         control.do_send(RegisterGlobalHandler::new::<Update, _>(ctx.address().recipient()));
-        control.do_send(RegisterGlobalHandler::new::<InfoOf, _>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
             if this.new.is_empty() && this.deleted.is_empty() {
@@ -69,14 +68,6 @@ impl Supervised for ProcessRegistry {
 
             let bcast = NodeController::from_registry().do_send(bcast);
         });
-    }
-}
-
-impl Handler<FromNode<InfoOf>> for ProcessRegistry {
-    type Result = Result<crate::proto::Pid, DispatchError>;
-
-    fn handle(&mut self, msg: FromNode<InfoOf>, ctx: &mut Context<Self>) -> Self::Result {
-        Ok(crate::proto::Pid { id: Vec::new() })
     }
 }
 
@@ -115,7 +106,7 @@ impl Handler<NodeStatus> for ProcessRegistry {
 
             let msg = NodeDispatch {
                 nodeid: id,
-                inner: Update(update).make_announcement(),
+                inner: Update(update).make_broadcast(),
             };
 
             let fut = control.send(msg);
@@ -166,7 +157,7 @@ impl Handler<Unregister> for ProcessRegistry {
     type Result = ();
 
     fn handle(&mut self, msg: Unregister, ctx: &mut Context<Self>) -> Self::Result {
-        log::info!("UNregistering {}", msg.id);
+        log::info!("Unregistering {}", msg.id);
         self.local.remove(&msg.id);
         self.deleted.insert(msg.id);
     }
@@ -192,3 +183,27 @@ impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
         }
     }
 }
+
+impl Handler<ProcDispatch<Broadcast>> for ProcessRegistry {
+    type Result = Response<(), DispatchError>;
+
+    fn handle(&mut self, msg: ProcDispatch<Broadcast>, ctx: &mut Context<Self>) -> Self::Result {
+        // TODO: Separate handling of dispatch coming from other nodes, prevent cycles
+        if let Some(p) = self.local.get(&msg.procid) {
+            ctx.spawn(wrap_future(p.dispatch(msg.inner.method, msg.inner.body).map(|_| ())));
+            Response::reply(Ok(()))
+        } else {
+            if let Some(node) = self.nodes.get(&msg.procid) {
+                let msg = NodeDispatch {
+                    nodeid: *node,
+                    inner: msg.inner,
+                };
+                NodeController::from_registry().do_send(msg);
+                Response::reply(Ok(()))
+            } else {
+                Response::reply(Err(DispatchError::DispatchLocal))
+            }
+        }
+    }
+}
+
