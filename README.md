@@ -18,7 +18,7 @@ service Exec{
 
 Code:
 ```rust
-#[derive(quix::ProcessDispatch)]
+#[derive(quix::DynHandler)]
 #[dispatch(Method)]
 pub struct Act {}
 
@@ -43,7 +43,7 @@ prost.
 We use the `RPC` entry in protobuf services as a unit of communication. Each RPC generates a single struct, which implements
 `Service` and `actix::Message`. The user needs to:
 1. Implement `Handler<M>` for RPCs he wants to consume using the specified `Process` actor
-2. Derive `ProcessDispatch` on the actor with dispatch containing the RPC struct
+2. Derive `DynHandler` on the actor with dispatch containing the RPC struct
 
 ### Processes
 In order to better handle distribution, we will introduce a concept of a process, which is just an identified actor.
@@ -63,11 +63,11 @@ registry when started and stopping. The registry uses gossip protocol to get rou
 ### Message dispatching
 Each message which is passable across network boundaries must be serializable using protobuf.
 
-The `ProcessDispatch` trait is responsible for creating a `Dispatcher` which performs message serialization and
+The `DynHandler` trait is responsible for creating a `Dispatcher` which performs message serialization and
 dispatching. It can be implemented by a proc macro:
 
 ```rust
-#[derive(quix::ProcessDispatch)]
+#[derive(quix::DynHandler)]
 #[dispatch(M1, M2)]
 pub struct Act {}
 

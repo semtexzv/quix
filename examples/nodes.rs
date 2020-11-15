@@ -1,7 +1,7 @@
 use actix::{Message, Actor, Handler};
-use quix::process::Process;
-use derive::ProcessDispatch;
-use quix::util::Service;
+use quix::process::{Process, DispatchError};
+use derive::DynHandler;
+use quix::util::RpcMethod;
 use bytes::{Buf, BufMut};
 
 #[derive(Clone, prost::Message)]
@@ -14,28 +14,28 @@ impl Message for Hello {
     type Result = String;
 }
 
-impl Service for Hello {
+impl RpcMethod for Hello {
     const NAME: &'static str = "";
-    const ID: u64 = 42;
+    const ID: u32 = 42;
 
-    fn read(b: impl Buf) -> Result<Self, ()> {
+    fn read(b: impl Buf) -> Result<Self, DispatchError> {
         unimplemented!()
     }
 
-    fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+    fn write(&self, b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Result<Self::Result, ()> {
+    fn read_result(b: impl Buf) -> Result<Self::Result, DispatchError> {
         unimplemented!()
     }
 
-    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), ()> {
+    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 }
 
-#[derive(ProcessDispatch)]
+#[derive(DynHandler)]
 #[dispatch(Hello)]
 pub struct World {
     hellos: Vec<String>

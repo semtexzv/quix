@@ -1,12 +1,12 @@
 use crate::import::*;
 
 use crate::Process;
-use crate::process::ProcessDispatch;
-use crate::util::Service;
+use crate::process::DynHandler;
+use crate::util::RpcMethod;
 
 /// Actor, which can be suspended to disk and woken up by loading it
-pub trait Suspendable: Actor<Context=Process<Self>> + ProcessDispatch {
-    type SuspendState : Service;
+pub trait Suspendable: Actor<Context=Process<Self>> + DynHandler {
+    type SuspendState : RpcMethod;
 
     /// Do work before actor is suspended. The returned future will be waited upon, and
     /// will block any further message processing

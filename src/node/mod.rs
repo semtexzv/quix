@@ -4,11 +4,11 @@ use crate::import::*;
 mod link;
 
 use crate::node::link::NodeLink;
-use crate::util::{RegisterRecipient, Service};
+use crate::util::{RegisterRecipient, RpcMethod};
 use crate::global::{Get, Global};
 use crate::process::{DispatchError, Dispatcher};
 use tokio::net::TcpStream;
-use crate::{Broadcast, Dispatch};
+use crate::{Broadcast, Dispatch, NodeDispatch, MethodCall};
 
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
@@ -32,8 +32,8 @@ pub struct NodeControl {
     ///
     /// Messages which are sent to process id of 00000000000000000....
     /// are considered unadressed, and are dispatched from here
-    pub dispatch: HashMap<u64, NodeHandler>,
-    pub listeners: HashMap<Uuid, Recipient<NodeUpdate>>,
+    pub dispatch: HashMap<u32, NodeHandler>,
+    pub status_listeners: HashMap<Uuid, Recipient<NodeStatus>>,
 }
 
 impl SystemService for NodeControl {}
@@ -63,7 +63,7 @@ impl Default for NodeControl {
         NodeControl {
             links: HashMap::new(),
             dispatch: HashMap::new(),
-            listeners: HashMap::new(),
+            status_listeners: HashMap::new(),
         }
     }
 }
@@ -85,8 +85,8 @@ impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
             .map(|(id, peer, link), this: &mut Self, ctx| {
                 log::info!("Connected to: {:?}", id);
                 this.links.insert(id, link.clone());
-                this.listeners.retain(|_, l| {
-                    l.do_send(NodeUpdate::Connected(id)).is_ok()
+                this.status_listeners.retain(|_, l| {
+                    l.do_send(NodeStatus::Connected(id)).is_ok()
                 });
             });
         ctx.spawn(fut);
@@ -94,32 +94,32 @@ impl StreamHandler<std::io::Result<TcpStream>> for NodeControl {
 }
 
 #[derive(Debug, Clone)]
-pub enum NodeUpdate {
+pub enum NodeStatus {
     Connected(Uuid),
     Disconnected(Uuid),
 }
 
-impl Message for NodeUpdate { type Result = (); }
+impl Message for NodeStatus { type Result = (); }
 
-impl Handler<NodeUpdate> for NodeControl {
+impl Handler<NodeStatus> for NodeControl {
     type Result = ();
 
-    fn handle(&mut self, msg: NodeUpdate, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: NodeStatus, ctx: &mut Self::Context) -> Self::Result {
         match msg {
-            NodeUpdate::Disconnected(id) => {
-                self.listeners.retain(|_, l| l.do_send(msg.clone()).is_ok());
+            NodeStatus::Disconnected(id) => {
+                self.status_listeners.retain(|_, l| l.do_send(msg.clone()).is_ok());
             }
-            _ => panic!("Should receive connected event yet")
+            _ => panic!("Should not receive connected event yet")
         }
     }
 }
 
-impl Handler<RegisterRecipient<NodeUpdate>> for NodeControl {
+impl Handler<RegisterRecipient<NodeStatus>> for NodeControl {
     type Result = Result<Uuid, std::convert::Infallible>;
 
-    fn handle(&mut self, msg: RegisterRecipient<NodeUpdate>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: RegisterRecipient<NodeStatus>, ctx: &mut Self::Context) -> Self::Result {
         let id = Uuid::new_v4();
-        self.listeners.insert(id, msg.0);
+        self.status_listeners.insert(id, msg.0);
         return Ok(id);
     }
 }
@@ -154,21 +154,17 @@ impl Handler<Connect> for NodeControl {
     }
 }
 
-pub struct SendToNode(pub Uuid, pub Dispatch);
-
-impl Message for SendToNode {
-    type Result = Result<Bytes, DispatchError>;
-}
-
-impl Handler<SendToNode> for NodeControl {
+impl Handler<NodeDispatch<MethodCall>> for NodeControl {
     type Result = actix::Response<Bytes, DispatchError>;
 
-    fn handle(&mut self, msg: SendToNode, ctx: &mut Self::Context) -> Self::Result {
-        if let Some(link) = self.links.get(&msg.0) {
+    fn handle(&mut self, msg: NodeDispatch<MethodCall>, ctx: &mut Self::Context) -> Self::Result {
+        if let Some(link) = self.links.get(&msg.nodeid) {
             let link = link.clone();
+
             let work = async move {
-                link.send(msg.1).await.unwrap()
+                link.send(msg.inner).await.unwrap()
             };
+
             actix::Response::fut(Box::pin(work))
         } else {
             return actix::Response::reply(Err(DispatchError::DispatchRemote));
@@ -187,10 +183,10 @@ impl Handler<Broadcast> for NodeControl {
     }
 }
 
-impl Handler<RecvFromNode<Dispatch>> for NodeControl {
-    type Result = ();
+impl Handler<FromNode<MethodCall>> for NodeControl {
+    type Result = Result<(), DispatchError>;
 
-    fn handle(&mut self, msg: RecvFromNode<Dispatch>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FromNode<MethodCall>, ctx: &mut Self::Context) -> Self::Result {
         log::info!("NodeControl dispatching unadressed message");
         match self.dispatch.get_mut(&msg.inner.method) {
             Some(m) => {
@@ -201,38 +197,38 @@ impl Handler<RecvFromNode<Dispatch>> for NodeControl {
                 log::warn!("Message: {} not handled by any global handler", msg.inner.method);
             }
         }
+        Ok(())
     }
 }
 
 #[derive(Debug)]
-pub struct RecvFromNode<M> {
+pub struct FromNode<M> {
     pub node_id: Uuid,
     pub inner: M,
 }
 
-impl<M> Message for RecvFromNode<M> {
-    type Result = ();
+impl<M> Message for FromNode<M> {
+    type Result = Result<(), DispatchError>;
 }
 
-pub type NodeHandler = Box<dyn FnMut(Uuid, Bytes)
-    -> Pin<Box<dyn Future<Output=Result<Bytes, DispatchError>>>> + Send + 'static>;
+pub type NodeHandler = Box<dyn FnMut(Uuid, Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>> + Send>;
 
-pub struct RegisterSystemHandler {
-    method: u64,
+pub struct RegisterGlobalHandler {
+    method: u32,
     handler: NodeHandler,
 }
 
-impl RegisterSystemHandler {
+impl RegisterGlobalHandler {
     /// Create new registration request for node-wide handler
-    pub fn new<M>(rec: Recipient<RecvFromNode<M>>) -> Self
-    where M: actix::Message<Result=()> + Service + Send + 'static,
+    pub fn new<M>(rec: Recipient<FromNode<M>>) -> Self
+    where M: actix::Message<Result=()> + RpcMethod + Send + 'static,
     {
-        let handler = move |node_id, data| -> Pin<Box<dyn Future<Output=_>>> {
+        let handler = move |node_id, data| -> BoxFuture<'static, _> {
             log::info!("Running global message handler");
             let rec = rec.clone();
             Box::pin(async move {
                 let msg = M::read(data).map_err(|_| DispatchError::Format)?;
-                let msg = RecvFromNode {
+                let msg = FromNode {
                     node_id,
                     inner: msg,
                 };
@@ -241,21 +237,21 @@ impl RegisterSystemHandler {
             })
         };
 
-        RegisterSystemHandler {
+        RegisterGlobalHandler {
             method: M::ID,
             handler: Box::new(handler),
         }
     }
 }
 
-impl Message for RegisterSystemHandler {
+impl Message for RegisterGlobalHandler {
     type Result = ();
 }
 
-impl Handler<RegisterSystemHandler> for NodeControl {
+impl Handler<RegisterGlobalHandler> for NodeControl {
     type Result = ();
 
-    fn handle(&mut self, msg: RegisterSystemHandler, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: RegisterGlobalHandler, ctx: &mut Context<Self>) -> Self::Result {
         self.dispatch.insert(msg.method, msg.handler);
     }
 }

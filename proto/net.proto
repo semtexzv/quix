@@ -2,6 +2,19 @@ syntax = "proto2";
 
 package quix.net;
 
+enum InvokeError {
+  // Process for invocation was not found
+  ProcNotFound = 1;
+  // Invocation target could not handle this method
+  HandlerNotFound = 2;
+  // Node specified in the message could not be found
+  NodeNotFound = 3;
+  // Invocation args could not be deserialized
+  MessageFormat = 4;
+  // Not sent but used internally, message handling timed out.
+  Timeout = 5;
+}
+
 message Net {
   optional Meta meta = 1;
   optional PingPong ping = 2;
@@ -22,11 +35,13 @@ message Request {
   optional bytes procid = 1;
   optional int64 correlation = 2;
 
-  required fixed64 methodid = 3;
+  required fixed32 methodid = 3;
   required bytes body = 4;
 }
 
 message Response {
   required int64 correlation = 1;
+  // TODO: make required
   required bytes body = 2;
+  optional InvokeError error = 3;
 }

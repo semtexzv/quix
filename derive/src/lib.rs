@@ -30,7 +30,7 @@ impl Parse for TypeList {
     }
 }
 
-#[proc_macro_derive(ProcessDispatch, attributes(dispatch))]
+#[proc_macro_derive(DynHandler, attributes(dispatch))]
 pub fn my_derive(_input: TokenStream) -> TokenStream {
     let mut i: DeriveInput = syn::parse(_input).unwrap();
     let attr: Attribute = i.attrs.pop().unwrap();
@@ -44,11 +44,10 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
         let id = quote! { #p::ID };
         let block = quote! {
         {
-            let msg = <#p as Service>::read(data).map_err(|_| quix::derive::DispatchError::Format);
+            let msg = <#p as RpcMethod>::read(data).map_err(|_| quix::derive::DispatchError::Format);
             Box::pin(async move {
                 let res = addr.send(msg?).await.map_err(|_| quix::derive::DispatchError::MailboxRemote)?;
                 let mut buf = quix::derive::BytesMut::new();
-                <#p as Service>::write_result(&res, &mut buf).map_err(|_| quix::derive::DispatchError::Format)?;
                 Ok(buf.freeze())
             })
         }
@@ -72,8 +71,8 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
     let dispatcher = quote! {
         pub struct LocalDispatcher { addr: actix::WeakAddr<#name> }
         impl quix::derive::Dispatcher for LocalDispatcher {
-            fn dispatch(&self, method: u64, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
-                use quix::derive::Service;
+            fn dispatch(&self, method: u32, data: quix::derive::Bytes) -> quix::derive::BoxFuture<'static, Result<quix::derive::Bytes, quix::derive::DispatchError>> {
+                use quix::derive::RpcMethod;
                 let addr = self.addr.upgrade().unwrap().clone();
                 #dispatch
             }
@@ -82,7 +81,7 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
     };
 
     let tokens = quote! {
-        impl quix::derive::ProcessDispatch for #name {
+        impl quix::derive::DynHandler for #name {
             fn make_dispatcher(addr: actix::WeakAddr<Self>) -> Box<dyn quix::derive::Dispatcher> {
                 #dispatcher
             }

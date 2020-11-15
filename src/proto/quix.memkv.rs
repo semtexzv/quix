@@ -23,24 +23,26 @@ use quix::derive::*;
 pub struct Get(pub Key);
 
 impl actix::Message for Get {
-    type Result = Result<Value, ()>;
+    type Result = Result<Value, DispatchError>;
 }
 
-impl quix::derive::Service for Get {
+impl quix::derive::RpcMethod for Get {
+
     const NAME: &'static str = "quix.memkv.MemKv.get";
-    const ID: u64 = 1538967013152268372;
-    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), ()> {
-        prost::Message::encode(&self.0, b).map_err(|_| ())
+    const ID: u32 = 2761597858;
+
+    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
+        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::Format)
     }
-    fn read(b: impl bytes::Buf) -> Result<Self, ()> {
-        Ok(Self(prost::Message::decode(b).map_err(|_| ())?))
+    fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> {
+        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::Format)?))
     }
 
-    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, ()> {
+    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, DispatchError> {
         Ok(Ok(<Value>::decode(b).unwrap()))
     }
 
-    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), ()> {
+    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
         let a: &Value = res.as_ref().unwrap(); a.encode(b).unwrap();
         Ok(())
     }

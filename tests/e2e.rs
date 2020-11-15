@@ -4,8 +4,9 @@ use std::time::Duration;
 use quix::Process;
 use std::thread::JoinHandle;
 use quix::global::{Global, Set};
-use quix::util::Service;
+use quix::util::RpcMethod;
 use bytes::{Buf, BufMut};
+use quix::process::DispatchError;
 
 
 #[derive(prost::Message)]
@@ -18,27 +19,27 @@ impl Message for M {
     type Result = i32;
 }
 
-impl Service for M {
+impl RpcMethod for M {
     const NAME: &'static str = "M";
-    const ID: u64 = 42;
+    const ID: u32 = 42;
 
-    fn read(b: impl Buf) -> Result<Self, ()> {
+    fn read(b: impl Buf) -> Result<Self, DispatchError> {
         unimplemented!()
     }
 
-    fn write(&self, b: &mut impl BufMut) -> Result<(), ()> {
+    fn write(&self, b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Result<Self::Result, ()> {
+    fn read_result(b: impl Buf) -> Result<Self::Result, DispatchError> {
         unimplemented!()
     }
 
-    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), ()> {
+    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 }
-#[derive(quix::ProcessDispatch)]
+#[derive(quix::DynHandler)]
 #[dispatch(M)]
 pub struct Act {}
 

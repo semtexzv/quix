@@ -17,13 +17,13 @@ use bytes::Bytes;
 #[doc(hidden)]
 pub mod derive {
     pub use futures::future::BoxFuture;
-    pub use crate::process::{ProcessDispatch, Dispatcher, DispatchError};
-    pub use crate::util::Service;
+    pub use crate::process::{DynHandler, Dispatcher, DispatchError};
+    pub use crate::util::RpcMethod;
     pub use bytes::{BytesMut, Bytes};
     pub use prost::Message as ProstMessage;
 }
 
-pub use _der::ProcessDispatch;
+pub use _der::DynHandler;
 pub use process::{Pid, Process};
 
 mod import;
@@ -42,12 +42,12 @@ use crate::process::DispatchError;
 
 #[derive(Debug, Clone)]
 pub struct Broadcast {
-    pub(crate) method: u64,
+    pub(crate) method: u32,
     pub(crate) body: Bytes,
 }
 
 impl Broadcast {
-    pub fn make(method: u64, body: Bytes) -> Self {
+    pub fn make(method: u32, body: Bytes) -> Self {
         Self {
             method,
             body,
@@ -57,6 +57,43 @@ impl Broadcast {
 
 impl Message for Broadcast { type Result = (); }
 
+/*
+pub struct ToNode(pub Uuid, pub Dispatch);
+
+impl Message for ToNode {
+    type Result = Result<Bytes, DispatchError>;
+}
+ */
+
+// Send a specified message to a node
+pub struct NodeDispatch<M> {
+    pub(crate) nodeid: Uuid,
+    pub(crate) inner: M,
+}
+
+impl<M, R> Message for NodeDispatch<M>
+where M: Message<Result=Result<R, DispatchError>> + 'static,
+      R: 'static
+{
+    type Result = Result<R, DispatchError>;
+}
+
+// Send a specified message to a specified process
+pub struct ProcDispatch<M> {
+    pub(crate) procid: Uuid,
+    pub(crate) inner: M,
+}
+
+impl<M, R> Message for ProcDispatch<M>
+where M: Message<Result=Result<R, DispatchError>> + 'static,
+      R: 'static
+{
+    type Result = Result<R, DispatchError>;
+}
+
+
+//pub struct DynHandler<M> {}
+
 /// Dispatch a message to appropriate handler
 ///
 /// if `id.is_nil() && !wait_for_response` then the response is returned as soon as local
@@ -64,9 +101,20 @@ impl Message for Broadcast { type Result = (); }
 ///
 /// Otherwise sets up a correlation counter and waits for response with a timeout(to prevent DOS attacks on correlation cache)
 #[derive(Debug, Clone)]
+pub struct MethodCall {
+    pub(crate) method: u32,
+    pub(crate) body: Bytes,
+    pub(crate) wait_for_response: bool,
+}
+
+impl Message for MethodCall {
+    type Result = Result<Bytes, DispatchError>;
+}
+
+#[derive(Debug, Clone)]
 pub struct Dispatch {
     pub(crate) id: Uuid,
-    pub(crate) method: u64,
+    pub(crate) method: u32,
     pub(crate) body: Bytes,
     pub(crate) wait_for_response: bool,
 }

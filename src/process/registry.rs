@@ -1,11 +1,11 @@
 use crate::import::*;
 
 
-use crate::process::{Dispatcher, ProcessDispatch, Pid, Process, DispatchError};
-use crate::node::{NodeControl, SendToNode, RegisterSystemHandler, RecvFromNode, NodeUpdate};
-use crate::util::{RegisterRecipient, Service};
+use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
+use crate::node::{NodeControl, RegisterGlobalHandler, FromNode, NodeStatus};
+use crate::util::{RegisterRecipient, RpcMethod};
 use crate::proto::{Update, ProcessList};
-use crate::Dispatch;
+use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -37,8 +37,6 @@ impl Default for ProcessRegistry {
 
 impl SystemService for ProcessRegistry {}
 
-//use crate::proto::process::{ProcessList, ProcessListOwned};
-
 fn fold_uuids(mut a: Vec<u8>, u: &Uuid) -> Vec<u8> {
     a.extend_from_slice(u.as_bytes());
     a
@@ -49,8 +47,8 @@ impl Supervised for ProcessRegistry {
         log::info!("Setting up process registry");
         let control = NodeControl::from_registry();
 
-        control.do_send(RegisterRecipient(ctx.address().recipient::<NodeUpdate>()));
-        control.do_send(RegisterSystemHandler::new::<Update>(ctx.address().recipient()));
+        control.do_send(RegisterRecipient(ctx.address().recipient::<NodeStatus>()));
+        control.do_send(RegisterGlobalHandler::new::<Update>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
             if this.new.is_empty() && this.deleted.is_empty() {
@@ -66,7 +64,7 @@ impl Supervised for ProcessRegistry {
                 delids: del.iter().fold(vec![], fold_uuids),
             };
 
-            let bcast = Update(plist).make_broadcast().unwrap();
+            let bcast = Update(plist).make_broadcast();
 
             let bcast = NodeControl::from_registry().send(bcast);
             ctx.spawn(wrap_future(async move { bcast.await.unwrap() }));
@@ -74,10 +72,10 @@ impl Supervised for ProcessRegistry {
     }
 }
 
-impl Handler<RecvFromNode<Update>> for ProcessRegistry {
-    type Result = ();
+impl Handler<FromNode<Update>> for ProcessRegistry {
+    type Result = Result<(), DispatchError>;
 
-    fn handle(&mut self, msg: RecvFromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: FromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 
@@ -91,21 +89,27 @@ impl Handler<RecvFromNode<Update>> for ProcessRegistry {
             log::info!("Proc: {} running on {}", new, node);
             self.nodes.insert(new, node);
         }
+        Ok(())
     }
 }
 
-impl Handler<NodeUpdate> for ProcessRegistry {
+impl Handler<NodeStatus> for ProcessRegistry {
     type Result = ();
 
-    fn handle(&mut self, msg: NodeUpdate, ctx: &mut Context<Self>) -> Self::Result {
-        if let NodeUpdate::Connected(id) = msg {
+    fn handle(&mut self, msg: NodeStatus, ctx: &mut Context<Self>) -> Self::Result {
+        if let NodeStatus::Connected(id) = msg {
             log::info!("Announcing process list to new node: {}", id);
             let control = NodeControl::from_registry();
             let update = ProcessList {
                 newids: self.local.keys().fold(vec![], fold_uuids),
                 delids: vec![],
             };
-            let msg = SendToNode(id, Update(update).make_announcement(Uuid::nil()).unwrap());
+
+            let msg = NodeDispatch {
+                nodeid: id,
+                inner: Update(update).make_announcement(),
+            };
+
             let fut = control.send(msg);
             let fut = wrap_future(async move { fut.await.unwrap().unwrap(); });
             // TODO: Do we need to wait here ?
@@ -114,63 +118,66 @@ impl Handler<NodeUpdate> for ProcessRegistry {
     }
 }
 
-pub struct RegisterProcess {
+pub struct Register {
     id: Uuid,
     dispatcher: Box<dyn Dispatcher>,
 }
 
-impl RegisterProcess {
-    pub fn new<A: ProcessDispatch>(pid: Pid<A>) -> Self {
+impl Register {
+    pub fn new<A: DynHandler>(pid: Pid<A>) -> Self {
         let dispatcher = A::make_dispatcher(pid.local_addr().unwrap().downgrade());
         let id = pid.id();
-        RegisterProcess {
+        Register {
             id,
             dispatcher,
         }
     }
 }
 
-impl Message for RegisterProcess {
-    type Result = ();
-}
+impl Message for Register { type Result = (); }
 
-impl Handler<RegisterProcess> for ProcessRegistry {
+impl Handler<Register> for ProcessRegistry {
     type Result = ();
 
-    fn handle(&mut self, msg: RegisterProcess, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Register, ctx: &mut Context<Self>) -> Self::Result {
         self.new.insert(msg.id.clone());
         let _ = self.local.insert(msg.id, msg.dispatcher);
         // TODO: Send small eager updates when registering new processes, and don't wait for periodic update
     }
 }
 
-pub struct UnregisterProcess {
+pub struct Unregister {
     pub id: Uuid
 }
 
-impl Message for UnregisterProcess {
+impl Message for Unregister {
     type Result = ();
 }
 
-impl Handler<UnregisterProcess> for ProcessRegistry {
+impl Handler<Unregister> for ProcessRegistry {
     type Result = ();
 
-    fn handle(&mut self, msg: UnregisterProcess, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Unregister, ctx: &mut Context<Self>) -> Self::Result {
         log::info!("UNregistering {}", msg.id);
         self.local.remove(&msg.id);
         self.deleted.insert(msg.id);
     }
 }
 
-impl Handler<Dispatch> for ProcessRegistry {
+impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
     type Result = Response<Bytes, DispatchError>;
 
-    fn handle(&mut self, msg: Dispatch, ctx: &mut Context<Self>) -> Self::Result {
-        if let Some(p) = self.local.get(&msg.id) {
-            Response::fut(p.dispatch(msg.method, msg.body))
+    fn handle(&mut self, msg: ProcDispatch<MethodCall>, ctx: &mut Context<Self>) -> Self::Result {
+        // TODO: Separate handling of dispatch coming from other nodes, prevent cycles
+        if let Some(p) = self.local.get(&msg.procid) {
+            Response::fut(p.dispatch(msg.inner.method, msg.inner.body))
         } else {
-            if let Some(node) = self.nodes.get(&msg.id) {
-                Response::fut(NodeControl::from_registry().send(SendToNode(node.clone(), msg)).map(|x| x.unwrap()))
+            if let Some(node) = self.nodes.get(&msg.procid) {
+                let msg = NodeDispatch {
+                    nodeid: *node,
+                    inner: msg.inner,
+                };
+                Response::fut(NodeControl::from_registry().send(msg).map(|x| x.unwrap()))
             } else {
                 Response::reply(Err(DispatchError::DispatchLocal))
             }

@@ -19,21 +19,23 @@ impl actix::Message for Update {
     type Result = ();
 }
 
-impl quix::derive::Service for Update {
+impl quix::derive::RpcMethod for Update {
+
     const NAME: &'static str = "quix.process.Process.update";
-    const ID: u64 = 5537769940034032186;
-    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), ()> {
-        prost::Message::encode(&self.0, b).map_err(|_| ())
+    const ID: u32 = 520454116;
+
+    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
+        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::Format)
     }
-    fn read(b: impl bytes::Buf) -> Result<Self, ()> {
-        Ok(Self(prost::Message::decode(b).map_err(|_| ())?))
+    fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> {
+        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::Format)?))
     }
 
-    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, ()> {
+    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, DispatchError> {
         Ok(())
     }
 
-    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), ()> {
+    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
         ();
         Ok(())
     }

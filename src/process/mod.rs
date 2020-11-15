@@ -1,13 +1,13 @@
 use crate::import::*;
 
-use crate::process::registry::{ProcessRegistry, RegisterProcess, UnregisterProcess};
-use crate::node::{NodeControl, SendToNode};
-use crate::util::Service;
+use crate::process::registry::{ProcessRegistry, Register, Unregister};
+use crate::node::NodeControl;
+use crate::util::RpcMethod;
 
 use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
 use actix::Handler;
 use std::pin::Pin;
-use crate::Dispatch;
+use crate::{Dispatch, ProcDispatch, MethodCall};
 
 pub mod registry;
 
@@ -23,19 +23,19 @@ pub enum DispatchError {
 /// Trait used to get generic dispatchers for different actors
 pub trait Dispatcher: Send + 'static {
     /// Lookup the method, deserialize to proper type, execute, serialize and return
-    fn dispatch(&self, method: u64, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
+    fn dispatch(&self, method: u32, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
 }
 
 /// Trait which must be implemented for all processes.
 ///
 /// The implementation of this trait is responsible for serializing/deserializing messages into proper structures,
-/// and should by implemnted by using the proc macro
-pub trait ProcessDispatch: Actor<Context=Process<Self>> {
+/// and should by implemented by a proc macro
+pub trait DynHandler: Actor<Context=Process<Self>> {
     fn make_dispatcher(addr: WeakAddr<Self>) -> Box<dyn Dispatcher>;
 }
 
 /// A special execution context. In this context the actor has a stable identity,
-/// whuch should not change. It can also receive messages from remote nodes.
+/// which should not change. It can also receive messages from remote nodes.
 pub struct Process<A: Actor<Context=Self>>
 {
     id: Uuid,
@@ -43,7 +43,7 @@ pub struct Process<A: Actor<Context=Self>>
     mb: Option<Mailbox<A>>,
 }
 
-impl<A: Actor<Context=Self>> Process<A> where A: ProcessDispatch
+impl<A: Actor<Context=Self>> Process<A> where A: DynHandler
 {
     /// Start a new process
     pub fn start(a: A) -> Pid<A> {
@@ -79,9 +79,9 @@ impl<A: Actor<Context=Self>> Process<A> where A: ProcessDispatch
         let pid = self.pid();
         let fut = self.into_fut(act);
         // Register this process with registry when starting
-        ProcessRegistry::from_registry().do_send(RegisterProcess::new(pid.clone()));
+        ProcessRegistry::from_registry().do_send(Register::new(pid.clone()));
         let fut = fut.map(move |_| {
-            ProcessRegistry::from_registry().do_send(UnregisterProcess { id });
+            ProcessRegistry::from_registry().do_send(Unregister { id });
         });
         actix_rt::spawn(fut);
         pid
@@ -151,7 +151,7 @@ where A: Handler<M>,
 }
 
 /// Global process identifier. This can be used to send messages to actors on different nodes.
-pub enum Pid<A: Actor + ProcessDispatch> {
+pub enum Pid<A: Actor + DynHandler> {
     Local {
         id: Uuid,
         addr: Addr<A>,
@@ -159,7 +159,7 @@ pub enum Pid<A: Actor + ProcessDispatch> {
     Remote(Uuid),
 }
 
-impl<A: Actor + ProcessDispatch> Clone for Pid<A> {
+impl<A: Actor + DynHandler> Clone for Pid<A> {
     fn clone(&self) -> Self {
         match self {
             Pid::Local {
@@ -170,7 +170,7 @@ impl<A: Actor + ProcessDispatch> Clone for Pid<A> {
     }
 }
 
-impl<A: Actor + ProcessDispatch> Pid<A> {
+impl<A: Actor + DynHandler> Pid<A> {
     pub fn local_addr(&self) -> Option<Addr<A>> {
         match self {
             Pid::Local { addr, .. } => Some(addr.clone()),
@@ -184,17 +184,22 @@ impl<A: Actor + ProcessDispatch> Pid<A> {
             Pid::Remote(id) => id.clone()
         }
     }
+
     pub fn send<M>(&self, m: M) -> PidRequest<A, M>
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + Service + Send,
+          M: Message + RpcMethod + Send,
           M::Result: Send,
 
     {
         match self {
             Pid::Local { addr, .. } => PidRequest::Local(addr.send(m)),
             Pid::Remote(id) => {
-                let dispatch = m.make_call(id.clone()).unwrap();
+                let dispatch = m.make_call();
+                let dispatch = ProcDispatch {
+                    procid: *id,
+                    inner: dispatch,
+                };
                 PidRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
             }
         }
@@ -203,13 +208,17 @@ impl<A: Actor + ProcessDispatch> Pid<A> {
     pub fn do_send<M>(&self, m: M)
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + Service + Send,
+          M: Message + RpcMethod + Send,
           M::Result: Send,
     {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
-                let dispatch = m.make_announcement(id.clone()).unwrap();
+                let dispatch = m.make_call();
+                let dispatch = ProcDispatch {
+                    procid: *id,
+                    inner: dispatch,
+                };
                 ProcessRegistry::from_registry().do_send(dispatch)
             }
         }
@@ -218,7 +227,7 @@ impl<A: Actor + ProcessDispatch> Pid<A> {
     pub fn recipient<M>(&self) -> PidRecipient<M>
     where A: Handler<M>,
           A::Context: ToEnvelope<A, M>,
-          M: Message + Service + Send + 'static,
+          M: Message + RpcMethod + Send + 'static,
           M::Result: Send,
     {
         match self {
@@ -243,13 +252,13 @@ where A: Actor + Handler<M>,
 
 {
     Local(Request<A, M>),
-    Remote(Request<ProcessRegistry, Dispatch>),
+    Remote(Request<ProcessRegistry, ProcDispatch<MethodCall>>),
 }
 
 impl<A: Actor, M: Message> Future for PidRequest<A, M>
 where A: Actor + Handler<M>,
       A::Context: ToEnvelope<A, M>,
-      M: Message + Service + Unpin + Send,
+      M: Message + RpcMethod + Unpin + Send,
       M::Result: Send
 {
     type Output = Result<M::Result, DispatchError>;
@@ -262,7 +271,7 @@ where A: Actor + Handler<M>,
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M as Service>::read_result(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(<M as RpcMethod>::read_result(res).map_err(|e| DispatchError::Format))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
@@ -305,14 +314,18 @@ where M: Message + Send,
 }
 
 impl<M> PidRecipient<M>
-where M: Message + Service + Send,
+where M: Message + RpcMethod + Send,
       M::Result: Send,
 {
     pub fn send(&self, m: M) -> PidRecipientRequest<M> {
         if let Some(ref local) = self.local {
             return PidRecipientRequest::Local(local.send(m));
         } else {
-            let dispatch = m.make_call(self.id.clone()).unwrap();
+            let dispatch = m.make_call();
+            let dispatch = ProcDispatch {
+                procid: self.id,
+                inner: dispatch,
+            };
             PidRecipientRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
         }
     }
@@ -321,7 +334,11 @@ where M: Message + Service + Send,
         if let Some(ref local) = self.local {
             local.do_send(m)
         } else {
-            let dispatch = m.make_announcement(self.id.clone()).unwrap();
+            let dispatch = m.make_call();
+            let dispatch = ProcDispatch {
+                procid: self.id,
+                inner: dispatch,
+            };
             Ok(ProcessRegistry::from_registry().do_send(dispatch))
         }
     }
@@ -331,12 +348,12 @@ pub enum PidRecipientRequest<M>
 where M: Message + Send + 'static,
       M::Result: Send {
     Local(RecipientRequest<M>),
-    Remote(Request<ProcessRegistry, Dispatch>),
+    Remote(Request<ProcessRegistry, ProcDispatch<MethodCall>>),
 }
 
 
 impl<M: Message> Future for PidRecipientRequest<M>
-where M: Message + Service + Unpin + Send,
+where M: Message + RpcMethod + Unpin + Send,
       M::Result: Send
 {
     type Output = Result<M::Result, DispatchError>;
@@ -349,7 +366,7 @@ where M: Message + Service + Unpin + Send,
             Self::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
                     Ok(Ok(res)) => {
-                        Poll::Ready(<M as Service>::read_result(res).map_err(|e| DispatchError::Format))
+                        Poll::Ready(<M as RpcMethod>::read_result(res).map_err(|e| DispatchError::Format))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
                     Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),

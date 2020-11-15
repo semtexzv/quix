@@ -8,10 +8,10 @@ impl prost_build::ServiceGenerator for Generator {
     fn generate(&mut self, service: Service, buf: &mut String) {
         for m in service.methods {
             eprintln!("{:?}", m);
-            let outtype = if m.output_proto_type == ".google.protobuf.Empty" {
+            let output = if m.output_proto_type == ".google.protobuf.Empty" {
                 "()".to_string()
             } else {
-                format!("Result<{}, ()>", m.output_type)
+                format!("Result<{}, DispatchError>", m.output_type)
             };
 
             let intype = if m.input_proto_type == ".google.protobuf.Empty" {
@@ -31,32 +31,33 @@ impl prost_build::ServiceGenerator for Generator {
 
 
             let svc_spec = format!("{}.{}.{}", service.package, service.name, m.name);
-            let svc_id = crc64::crc64(0, svc_spec.as_bytes());
-
+            let svc_id = crc::crc32::checksum_ieee(svc_spec.as_bytes());
 
             write!(buf, r#"
 use quix::derive::*;
 pub struct {name}(pub {input});
 
 impl actix::Message for {name} {{
-    type Result = {res};
+    type Result = {output};
 }}
 
-impl quix::derive::Service for {name} {{
+impl quix::derive::RpcMethod for {name} {{
+
     const NAME: &'static str = "{svc_spec}";
-    const ID: u64 = {svc_id};
-    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), ()> {{
-        prost::Message::encode(&self.0, b).map_err(|_| ())
+    const ID: u32 = {svc_id};
+
+    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{
+        prost::Message::encode(&self.0, b).map_err(|_| DispatchError::Format)
     }}
-    fn read(b: impl bytes::Buf) -> Result<Self, ()> {{
-        Ok(Self(prost::Message::decode(b).map_err(|_| ())?))
+    fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> {{
+        Ok(Self(prost::Message::decode(b).map_err(|_| DispatchError::Format)?))
     }}
 
-    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, ()> {{
+    fn read_result(b: impl bytes::Buf) -> Result<Self::Result, DispatchError> {{
         Ok({out_read})
     }}
 
-    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), ()> {{
+    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{
         {out_write};
         Ok(())
     }}
@@ -87,7 +88,6 @@ impl ::core::ops::DerefMut for {name} {{
 }}
             "#,
                    name = m.proto_name,
-                   res = outtype,
                    input = intype
             ).unwrap();
         }

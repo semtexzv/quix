@@ -1,4 +1,26 @@
-use crate::import::*;
+use crate::{
+    import::*,
+    Broadcast,
+    Dispatch,
+    node::NodeControl,
+    node::FromNode,
+    node::NodeConfig,
+    node::NodeStatus,
+    proto::Meta,
+    proto::Net,
+    proto::Request,
+    proto::Response,
+    proto::PingPong,
+    process::registry::ProcessRegistry,
+    process::DispatchError,
+    global::Global,
+    global::Get,
+    util::RpcMethod,
+    util::uuid,
+    MethodCall,
+    ProcDispatch,
+    proto::InvokeError,
+};
 
 use std::io;
 use actix::io::{FramedWrite, WriteHandler};
@@ -6,16 +28,8 @@ use tokio::{
     net::tcp::OwnedWriteHalf,
     net::TcpStream,
 };
-
-use crate::{
-    Broadcast, Dispatch,
-    node::{NodeControl, RecvFromNode, NodeConfig, NodeUpdate},
-    proto::{Meta, Net, Request, Response, PingPong},
-    process::registry::ProcessRegistry,
-    process::DispatchError,
-    global::{Global, Get},
-    util::{Service, uuid},
-};
+use actix::Running;
+use futures::io::Error;
 
 
 pub struct NodeLink {
@@ -24,11 +38,6 @@ pub struct NodeLink {
     stream: FramedWrite<Net, OwnedWriteHalf, NetCodec>,
     running: HashMap<i64, Sender<Result<Bytes, DispatchError>>>,
 }
-
-impl Actor for NodeLink {
-    type Context = Context<Self>;
-}
-
 
 #[derive(Debug, Copy, Clone)]
 pub struct NetCodec;
@@ -67,6 +76,7 @@ impl tokio_util::codec::Decoder for NetCodec {
 }
 
 impl NodeLink {
+    /// Open connection to a node, exchange IDs, setup local state
     pub async fn new(socket: TcpStream) -> (Uuid, SocketAddr, Addr<Self>) {
         let codec = NetCodec;
 
@@ -110,9 +120,82 @@ impl NodeLink {
         });
         (id, peer_addr, this)
     }
+
+    fn handle_return_correlation(&mut self, ctx: &mut Context<Self>, res: Result<Bytes, DispatchError>, corr: i64) {
+        let res = Response {
+            correlation: corr,
+            body: res.unwrap().to_vec(),
+            error: None,
+        };
+        let msg = Net {
+            response: Some(res),
+            ..Default::default()
+        };
+        self.stream.write(msg);
+    }
+
+    fn handle_request(&mut self, ctx: &mut Context<Self>, req: Request) {
+        log::trace!("Received request");
+
+        let procid: Option<Uuid> = req.procid.map(uuid).filter(|v| !v.is_nil());
+
+        let dispatch = MethodCall {
+            method: req.methodid,
+            body: Bytes::from(req.body),
+            wait_for_response: req.correlation.is_some(),
+        };
+        if let Some(procid) = procid {
+            let procreg = ProcessRegistry::from_registry();
+
+            let dispatch = ProcDispatch {
+                procid,
+                inner: dispatch,
+            };
+
+            if let Some(corr) = req.correlation {
+                let work = wrap_future(procreg.send(dispatch).map(|r| r.unwrap()));
+                let work = work.map(move |res, this: &mut Self, ctx| this.handle_return_correlation(ctx, res, corr));
+                ctx.spawn(work);
+            } else {
+                procreg.do_send(dispatch);
+            }
+        } else {
+            let nodecontrol = NodeControl::from_registry();
+            let dispatch = FromNode {
+                node_id: self.id,
+                inner: dispatch,
+            };
+
+            nodecontrol.do_send(dispatch);
+            // TODO: We need to somehow handle returns in node-wide requests
+            /*
+            if let Some(corr) = req.correlation {
+                let work = wrap_future(nodecontrol.send(dispatch).map(|r| r.unwrap()));
+                let work = work.map(move |res, this: &mut Self, ctx| this.handle_return_correlation(ctx, res, corr));
+                ctx.spawn(work);
+            } else {
+                // Without process ID, we currently only handle notifications
+
+            }*/
+        }
+    }
 }
 
-impl WriteHandler<std::io::Error> for NodeLink {}
+impl Actor for NodeLink {
+    type Context = Context<Self>;
+
+    fn stopped(&mut self, ctx: &mut Self::Context) {
+        NodeControl::from_registry().do_send(NodeStatus::Disconnected(self.id));
+    }
+}
+
+impl WriteHandler<std::io::Error> for NodeLink {
+    fn error(&mut self, err: Error, ctx: &mut Self::Context) -> Running {
+        panic!("Invalid data {:?}", err);
+        // Stop on errors
+        Running::Stop
+    }
+}
 
 impl StreamHandler<io::Result<Net>> for NodeLink {
     fn handle(&mut self, item: io::Result<Net>, ctx: &mut Context<Self>) {
@@ -122,7 +205,6 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
                 log::error!("Error occured, disconnecting");
                 panic!("Invalid data {:?}", error);
                 ctx.stop();
-                NodeControl::from_registry().do_send(NodeUpdate::Disconnected(self.id));
                 return;
             }
         };
@@ -134,53 +216,20 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
                 ..Default::default()
             });
         }
+
         if let Some(mut req) = msg.request {
-            log::trace!("Received request");
-
-            let procid: Uuid = req.procid.map(uuid).unwrap_or(Uuid::nil());
-
-            let dispatch = Dispatch {
-                id: procid,
-                method: req.methodid,
-                body: Bytes::from(req.body),
-                wait_for_response: req.correlation.is_some(),
-            };
-            if procid.is_nil() && !dispatch.wait_for_response {
-                NodeControl::from_registry().do_send(RecvFromNode {
-                    node_id: self.id.clone(),
-                    inner: dispatch,
-                });
-            } else {
-                let procreg = ProcessRegistry::from_registry();
-
-                let correlation = req.correlation.take();
-                let work = wrap_future(procreg.send(dispatch))
-                    .map(move |res, this: &mut Self, ctx| {
-                        if let Some(correlation) = correlation {
-                            let msg = Net {
-                                response: Some(Response {
-                                    correlation,
-                                    body: res.unwrap().unwrap().to_vec(),
-                                }),
-                                ..Default::default()
-                            };
-                            this.stream.write(msg);
-                        }
-                    });
-                ctx.spawn(work);
-            }
+            self.handle_request(ctx, req);
         }
 
         if let Some(res) = msg.response {
             if let Some(tx) = self.running.remove(&res.correlation) {
-                tx.send(Ok(Bytes::from(res.body))).unwrap();
+                let _ = tx.send(Ok(Bytes::from(res.body)));
             } else {
                 log::error!("Missing correlation id: {}", res.correlation)
             }
         }
     }
 }
-
 
 impl Handler<Broadcast> for NodeLink {
     type Result = ();
@@ -193,52 +242,45 @@ impl Handler<Broadcast> for NodeLink {
             methodid: msg.method,
             body: msg.body.to_vec(),
         };
+
         let netreq = Net {
             request: Some(req),
             ..Default::default()
         };
+
         self.stream.write(netreq);
     }
 }
 
-impl Handler<Dispatch> for NodeLink {
+impl Handler<MethodCall> for NodeLink {
     type Result = actix::Response<Bytes, DispatchError>;
 
-    fn handle(&mut self, msg: Dispatch, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: MethodCall, ctx: &mut Context<Self>) -> Self::Result {
         let mut req = Request {
             correlation: None,
-            procid: Some(msg.id.as_bytes().to_vec()),
+            procid: None,
+
             methodid: msg.method,
             body: msg.body.to_vec(),
         };
 
-        if msg.wait_for_response {
-            self.correlation_counter = self.correlation_counter.wrapping_add(1);
+        self.correlation_counter = self.correlation_counter.wrapping_add(1);
 
-            let (tx, rx) = futures::channel::oneshot::channel();
-            self.running.insert(self.correlation_counter, tx);
+        let (tx, rx) = futures::channel::oneshot::channel();
+        self.running.insert(self.correlation_counter, tx);
 
-            req.correlation = Some(self.correlation_counter);
+        req.correlation = Some(self.correlation_counter);
 
-            let net = Net {
-                request: Some(req),
-                ..Default::default()
-            };
+        let net = Net {
+            request: Some(req),
+            ..Default::default()
+        };
 
-            self.stream.write(net);
-            let fut = tokio::time::timeout(Duration::from_secs(10), rx);
-            actix::Response::fut(fut
-                .map_err(|_| DispatchError::Timeout)
-                .map(|v| v.map(|v| v.map_err(|_| DispatchError::MailboxRemote))??)
-            )
-        } else {
-            let net = Net {
-                request: Some(req),
-                ..Default::default()
-            };
-            self.stream.write(net);
-            // TODO: reply should be an  option here
-            actix::Response::reply(Ok(Bytes::new()))
-        }
+        self.stream.write(net);
+        let fut = tokio::time::timeout(Duration::from_secs(10), rx);
+        actix::Response::fut(fut
+            .map_err(|_| DispatchError::Timeout)
+            .map(|v| v.map(|v| v.map_err(|_| DispatchError::MailboxRemote))??)
+        )
     }
 }
