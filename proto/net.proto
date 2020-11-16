@@ -49,3 +49,4 @@ message Response {
   optional bytes body = 2;
   optional InvokeError error = 3;
 }
+

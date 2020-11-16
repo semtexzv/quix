@@ -26,7 +26,7 @@ impl RpcMethod for M {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Result<Self::Result, DispatchError> {
+    fn read_result(b: impl Buf) -> Self::Result {
         unimplemented!()
     }
 

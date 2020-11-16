@@ -3,8 +3,13 @@ package quix.process;
 
 import "google/protobuf/empty.proto";
 
+message PidProto {
+  bytes pid = 1;
+}
+
 // List of created/deleted process ids
 message ProcessList {
+  bytes nodeid = 1;
   bytes newids = 2;
   bytes delids = 3;
 }

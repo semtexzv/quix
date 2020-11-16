@@ -18,19 +18,19 @@ impl RpcMethod for Hello {
     const NAME: &'static str = "";
     const ID: u32 = 42;
 
-    fn read(b: impl Buf) -> Result<Self, DispatchError> {
+    fn read(_: impl Buf) -> Result<Self, DispatchError> {
         unimplemented!()
     }
 
-    fn write(&self, b: &mut impl BufMut) -> Result<(), DispatchError> {
+    fn write(&self, _: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Result<Self::Result, DispatchError> {
+    fn read_result(_: impl Buf) -> Self::Result {
         unimplemented!()
     }
 
-    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), DispatchError> {
+    fn write_result(_: &Self::Result, _b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 }

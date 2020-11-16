@@ -7,7 +7,7 @@ use crate::util::RpcMethod;
 use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
 use actix::Handler;
 use std::pin::Pin;
-use crate::{Dispatch, ProcDispatch, MethodCall};
+use crate::{ProcDispatch, MethodCall};
 
 pub mod registry;
 
@@ -19,9 +19,11 @@ pub enum DispatchError {
     MessageFormat,
     Timeout,
 
-    DispatchRemote,
-    DispatchLocal,
     MailboxRemote,
+    MailboxLocal,
+
+    Protocol,
+    Other
 
 }
 
@@ -45,7 +47,7 @@ impl DispatchError {
             3 => NodeNotFound,
             4 => MessageFormat,
             5 => Timeout,
-            _ => DispatchRemote
+            _ => Other
         }
     }
 }
@@ -204,6 +206,10 @@ impl<A: Actor + DynHandler> Pid<A> {
     pub fn from(uuid: Uuid) -> Self {
         Self::Remote(uuid)
     }
+    pub fn into_remote(self) -> Self {
+        Self::Remote(self.id())
+    }
+
     pub fn local_addr(&self) -> Option<Addr<A>> {
         match self {
             Pid::Local { addr, .. } => Some(addr.clone()),
@@ -299,7 +305,7 @@ where A: Actor + Handler<M>,
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
             PidRequest::Local(r) => {
-                r.poll_unpin(cx).map_err(|e| DispatchError::DispatchLocal)
+                r.poll_unpin(cx).map_err(|e| DispatchError::MailboxRemote)
             }
             PidRequest::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
@@ -307,7 +313,7 @@ where A: Actor + Handler<M>,
                         Poll::Ready(Ok(<M as RpcMethod>::read_result(res)))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
-                    Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
+                    Err(mailbox) => Poll::Ready(Err(DispatchError::MailboxLocal)),
                 }
             }
         }
@@ -394,7 +400,7 @@ where M: Message + RpcMethod + Unpin + Send,
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         match self.get_mut() {
             Self::Local(r) => {
-                r.poll_unpin(cx).map_err(|e| DispatchError::DispatchLocal)
+                r.poll_unpin(cx).map_err(|e| DispatchError::MailboxLocal)
             }
             Self::Remote(r) => {
                 match futures::ready!(r.poll_unpin(cx)) {
@@ -402,7 +408,7 @@ where M: Message + RpcMethod + Unpin + Send,
                         Poll::Ready(Ok(<M as RpcMethod>::read_result(res)))
                     }
                     Ok(Err(err)) => Poll::Ready(Err(err)),
-                    Err(mailbox) => Poll::Ready(Err(DispatchError::DispatchRemote)),
+                    Err(mailbox) => Poll::Ready(Err(DispatchError::MailboxLocal)),
                 }
             }
         }

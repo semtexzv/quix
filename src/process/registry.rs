@@ -5,7 +5,7 @@ use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
 use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeStatus};
 use crate::util::{RegisterRecipient, RpcMethod};
 use crate::proto::{Update, ProcessList};
-use crate::{Dispatch, NodeDispatch, MethodCall, ProcDispatch, Broadcast};
+use crate::{NodeDispatch, MethodCall, ProcDispatch, Broadcast};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -71,10 +71,10 @@ impl Supervised for ProcessRegistry {
     }
 }
 
-impl Handler<FromNode<Update>> for ProcessRegistry {
+impl Handler<Update> for ProcessRegistry {
     type Result = Result<(), DispatchError>;
 
-    fn handle(&mut self, msg: FromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Update, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 
@@ -178,7 +178,7 @@ impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
                 };
                 Response::fut(NodeController::from_registry().send(msg).map(|x| x.unwrap()))
             } else {
-                Response::reply(Err(DispatchError::DispatchLocal))
+                Response::reply(Err(DispatchError::ProcessNotFound))
             }
         }
     }
@@ -201,7 +201,7 @@ impl Handler<ProcDispatch<Broadcast>> for ProcessRegistry {
                 NodeController::from_registry().do_send(msg);
                 Response::reply(Ok(()))
             } else {
-                Response::reply(Err(DispatchError::DispatchLocal))
+                Response::reply(Err(DispatchError::ProcessNotFound))
             }
         }
     }

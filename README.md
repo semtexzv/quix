@@ -36,14 +36,6 @@ impl Handler<Method> for Act {
 ... 
 }
 ```
-### Messages
-Both internal and user messages use Protobuf format for serialization. The indivudal `Messages` from protobuf just passed to
-prost.
-
-We use the `RPC` entry in protobuf services as a unit of communication. Each RPC generates a single struct, which implements
-`Service` and `actix::Message`. The user needs to:
-1. Implement `Handler<M>` for RPCs he wants to consume using the specified `Process` actor
-2. Derive `DynHandler` on the actor with dispatch containing the RPC struct
 
 ### Processes
 In order to better handle distribution, we will introduce a concept of a process, which is just an identified actor.
@@ -53,8 +45,54 @@ This actor is not referneced through the `Addr<A>` struct, but rather through `P
 
 The `Pid<A>` can be obtained in 2 ways: 
 1. Using `Process<A>` instead of `Context<A>` - New context type for actors, which have stable identity
-2. Receiving a message containing a `Pid<A>` - Pids are transparent, and can be sent between nodes.
+2. Receiving a message containing a `PidProto` - Pids are transparent, and can be sent between nodes.
 The distribution subsystem should handle node lookup internally, thorugh the node-local registry.
+
+### Messages
+We use protobuf for defining the message types, and for generating necessary serialization and deserialization code.
+
+The `Service` in protobuf file defines a set of m`rpc` methods. We take these `rpc` entries, and generate message defintions
+from them. Eg:
+
+```protobuf
+message M1 {
+
+}
+service Exec{
+  rpc Method(M1) returns(M1);
+}
+```
+will generate something like this:
+```rust
+
+pub struct Method(pub M1);
+
+impl actix::Message for Method {
+    type Result = Result<M1, DispatchError>;
+}
+
+impl quix::derive::RpcMethod for Method {
+    const NAME: &'static str = "quix.net.Exec.method";
+    const ID: u32 = 529753007;
+
+    fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> { ... }
+    fn read(b: impl bytes::Buf) -> Result<Self, DispatchError> { ... }
+
+    fn read_result(b: impl bytes::Buf) -> Self::Result { ... }
+    fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> { ... }
+}
+```
+
+If you want to process the `Method` messages, you just have to implement `Handler<Method>` and annotate
+your `Process` actor with: 
+
+```rust
+#[derive(DynHandler)]
+#[dispatch(Method)]
+pub struct YourActor {}
+```
+Then, you can either register your as a Node-global handler by sending a message to the `NodeController` actor,
+or you can just send your `Pid<Self>` serialized into `PidProto`.
 
 ### ProcessRegistry
 Is a node-local singleton, which contains a map of actors. Process is automatically registered and unregistered from this 

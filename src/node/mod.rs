@@ -8,7 +8,7 @@ use crate::util::{RegisterRecipient, RpcMethod};
 use crate::global::{Get, Global};
 use crate::process::{Dispatcher, DispatchError};
 use tokio::net::TcpStream;
-use crate::{Broadcast, Dispatch, NodeDispatch, MethodCall};
+use crate::{Broadcast, NodeDispatch, MethodCall};
 use crate::process::registry::ProcessRegistry;
 
 #[derive(Debug, Clone)]
@@ -198,7 +198,7 @@ impl Handler<NodeDispatch<MethodCall>> for NodeController {
 
             actix::Response::fut(Box::pin(work))
         } else {
-            return actix::Response::reply(Err(DispatchError::DispatchRemote));
+            return actix::Response::reply(Err(DispatchError::NodeNotFound));
         }
     }
 }
@@ -238,7 +238,8 @@ impl Handler<FromNode<MethodCall>> for NodeController {
         log::info!("NodeControl dispatching unadressed message");
         match self.dispatch.get_mut(&msg.inner.method) {
             Some(m) => {
-                Response::fut((m)(msg.node_id, msg.inner.body))
+                let fut = (m)(msg.node_id, msg.inner.body);
+                Response::fut(fut)
             }
             None => {
                 log::warn!("Message: {} not handled by any global handler", msg.inner.method);
@@ -273,17 +274,21 @@ impl RegisterGlobalHandler {
           T: prost::Message + Send + 'static
     {
         let handler = move |node_id, data| -> BoxFuture<'static, _> {
-            log::info!("Running global message handler");
             let rec = rec.clone();
-            Box::pin(async move {
-                let msg = M::read(data).map_err(|_| DispatchError::MessageFormat)?;
-                let msg = FromNode {
+
+            let msg = M::read(data)
+                .map_err(|_| DispatchError::MessageFormat)
+                .map(|msg| FromNode {
                     node_id,
                     inner: msg,
-                };
-                let res = rec.send(msg).await.map_err(|_| DispatchError::MessageFormat)??;
+                })
+                .map(|msg| rec.send(msg));
+
+            Box::pin(async move {
+                log::trace!("Running global message handler");
+                let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
                 let mut buf = BytesMut::new();
-                T::encode(&res, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+                T::encode(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
                 Ok(buf.freeze())
             })
         };

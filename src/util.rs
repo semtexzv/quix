@@ -1,5 +1,5 @@
 use crate::import::*;
-use crate::{Dispatch, Broadcast, MethodCall};
+use crate::{Broadcast, MethodCall};
 use crate::process::DispatchError;
 
 pub struct RegisterRecipient<M>(pub Recipient<M>)

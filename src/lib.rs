@@ -23,7 +23,7 @@ pub mod derive {
     pub use bytes::{BytesMut, Bytes};
     pub use prost::Message as ProstMessage;
 
-    pub use crate::process::{Pid, DynHandler, Dispatcher};
+    pub use crate::process::{Pid, PidRecipient, DynHandler, Dispatcher};
     pub use crate::node::NodeId;
     pub use crate::util::RpcMethod;
     pub use crate::process::DispatchError;
@@ -43,7 +43,7 @@ pub mod memkv;
 
 
 use uuid::Uuid;
-use crate::process::DispatchError;
+pub use crate::process::DispatchError;
 
 
 #[derive(Debug, Clone)]
@@ -64,14 +64,6 @@ impl Broadcast {
 impl Message for Broadcast {
     type Result = Result<(), DispatchError>;
 }
-
-/*
-pub struct ToNode(pub Uuid, pub Dispatch);
-
-impl Message for ToNode {
-    type Result = Result<Bytes, DispatchError>;
-}
- */
 
 // Send a specified message to a node
 pub struct NodeDispatch<M> {
@@ -115,17 +107,5 @@ pub struct MethodCall {
 }
 
 impl Message for MethodCall {
-    type Result = Result<Bytes, DispatchError>;
-}
-
-#[derive(Debug, Clone)]
-pub struct Dispatch {
-    pub(crate) id: Uuid,
-    pub(crate) method: u32,
-    pub(crate) body: Bytes,
-    pub(crate) wait_for_response: bool,
-}
-
-impl Message for Dispatch {
     type Result = Result<Bytes, DispatchError>;
 }

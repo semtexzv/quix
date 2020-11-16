@@ -73,6 +73,18 @@ impl Supervised for MemKv {}
 impl SystemService for MemKv {}
 
 
+
+impl Handler<Get> for MemKv {
+    type Result = Result<crate::proto::Value, DispatchError>;
+
+    fn handle(&mut self, msg: Get, ctx: &mut Self::Context) -> Self::Result {
+        let res = self.data.get(&msg.data).map(|v| v.to_vec());
+        Ok(crate::proto::Value {
+            data: res
+        })
+    }
+}
+
 impl Handler<FromNode<Get>> for MemKv {
     type Result = Result<crate::proto::Value, DispatchError>;
 

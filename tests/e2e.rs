@@ -1,4 +1,4 @@
-use quix::node::{NodeConfig, NodeController, Connect, NodeId};
+use quix::node::{NodeConfig, NodeController, Connect};
 use actix::{SystemService, Message, Actor, Handler, Running};
 use std::time::Duration;
 use quix::{Process};
@@ -24,19 +24,19 @@ impl RpcMethod for M {
     const NAME: &'static str = "M";
     const ID: u32 = 42;
 
-    fn read(b: impl Buf) -> Result<Self, DispatchError> {
+    fn read(_b: impl Buf) -> Result<Self, DispatchError> {
         unimplemented!()
     }
 
-    fn write(&self, b: &mut impl BufMut) -> Result<(), DispatchError> {
+    fn write(&self, _b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 
-    fn read_result(b: impl Buf) -> Self::Result {
+    fn read_result(_b: impl Buf) -> Self::Result {
         unimplemented!()
     }
 
-    fn write_result(r: &Self::Result, b: &mut impl BufMut) -> Result<(), DispatchError> {
+    fn write_result(_r: &Self::Result, _b: &mut impl BufMut) -> Result<(), DispatchError> {
         unimplemented!()
     }
 }
@@ -48,7 +48,7 @@ pub struct Act {}
 impl Actor for Act {
     type Context = Process<Self>;
 
-    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+    fn stopping(&mut self, _: &mut Self::Context) -> Running {
         log::warn!("Stopping actor");
         Running::Stop
     }

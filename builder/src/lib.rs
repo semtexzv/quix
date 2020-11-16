@@ -50,6 +50,11 @@ impl<A> {name}Addr for Pid<A> where A: Handler<{name}> + DynHandler {{
         Box::pin(self.send({name}(arg)).map(|r| r.and_then(|r|r) ))
     }}
 }}
+impl {name}Addr for PidRecipient<{name}> {{
+    fn {methodname}(&self, arg: {input}) -> BoxFuture<'static, {rettype}> {{
+        Box::pin(self.send({name}(arg)).map(|r| r.and_then(|r|r) ))
+    }}
+}}
 impl {name}Addr for NodeId {{
     fn {methodname}(&self, arg: {input}) ->BoxFuture<'static, {rettype}> {{
         Box::pin(self.send({name}(arg)))

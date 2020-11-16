@@ -1,7 +1,6 @@
 use crate::{
     import::*,
     Broadcast,
-    Dispatch,
     node::NodeController,
     node::FromNode,
     node::NodeConfig,
@@ -176,6 +175,7 @@ impl NodeLink {
                 ctx.spawn(work);
             } else {
                 // Err, here it should be a broadcast
+                //ctx.spawn(wrap_future(async move { nodecontrol.send(dispatch).await.unwrap().unwrap(); }));
                 nodecontrol.do_send(dispatch);
                 // Without process ID, we currently only handle notifications
             }
@@ -232,7 +232,7 @@ impl StreamHandler<io::Result<Net>> for NodeLink {
                     let _ = tx.send(Ok(Bytes::from(body)));
                 } else {
                     log::error!("Received response without error or body");
-                    let _ = tx.send(Err(DispatchError::DispatchRemote));
+                    let _ = tx.send(Err(DispatchError::Protocol));
                 }
             } else {
                 log::error!("Missing correlation id: {}", res.correlation)

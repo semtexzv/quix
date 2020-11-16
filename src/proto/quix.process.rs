@@ -19,6 +19,11 @@ impl<A> UpdateAddr for Pid<A> where A: Handler<Update> + DynHandler {
         Box::pin(self.send(Update(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
+impl UpdateAddr for PidRecipient<Update> {
+    fn update(&self, arg: ProcessList) -> BoxFuture<'static, Result<(), DispatchError>> {
+        Box::pin(self.send(Update(arg)).map(|r| r.and_then(|r|r) ))
+    }
+}
 impl UpdateAddr for NodeId {
     fn update(&self, arg: ProcessList) ->BoxFuture<'static, Result<(), DispatchError>> {
         Box::pin(self.send(Update(arg)))

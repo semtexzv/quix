@@ -31,6 +31,11 @@ impl<A> GetAddr for Pid<A> where A: Handler<Get> + DynHandler {
         Box::pin(self.send(Get(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
+impl GetAddr for PidRecipient<Get> {
+    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>> {
+        Box::pin(self.send(Get(arg)).map(|r| r.and_then(|r|r) ))
+    }
+}
 impl GetAddr for NodeId {
     fn get(&self, arg: Key) ->BoxFuture<'static, Result<Value, DispatchError>> {
         Box::pin(self.send(Get(arg)))

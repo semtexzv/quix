@@ -61,7 +61,7 @@ pub fn my_derive(_input: TokenStream) -> TokenStream {
         match method {
             #(#messages),*
             _ => {
-                Box::pin(async move { Err(quix::derive::DispatchError::DispatchRemote)})
+                Box::pin(async move { Err(quix::derive::DispatchError::MethodNotFound)})
             }
         }
     };
