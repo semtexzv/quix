@@ -35,7 +35,7 @@ impl NodeId {
         async move {
             let res = NodeController::from_registry().send(NodeDispatch {
                 nodeid,
-                inner: m.make_call(),
+                inner: m.make_call(None),
             }).await.map_err(|e| DispatchError::MailboxRemote)??;
 
             M::read_result(res)
@@ -46,7 +46,7 @@ impl NodeId {
     {
         NodeController::from_registry().do_send(NodeDispatch {
             nodeid: self.0,
-            inner: m.make_broadcast(),
+            inner: m.make_broadcast(None),
         })
     }
 }
@@ -184,6 +184,7 @@ impl Handler<Connect> for NodeController {
 }
 
 pub struct ListNodes;
+
 impl Message for ListNodes {
     type Result = Vec<Uuid>;
 }
@@ -204,11 +205,13 @@ impl Handler<NodeDispatch<MethodCall>> for NodeController {
         if let Some(link) = self.links.get(&msg.nodeid) {
             let link = link.clone();
 
-            let work = async move {
-                link.send(msg.inner).await.unwrap()
-            };
+            let send = link.send(msg.inner)
+                .map(|r| r
+                    .map_err(|_| DispatchError::MailboxLocal)
+                    .and_then(|r| r)
+                );
 
-            actix::Response::fut(Box::pin(work))
+            actix::Response::fut(Box::pin(send))
         } else {
             return actix::Response::reply(Err(DispatchError::NodeNotFound));
         }
@@ -235,6 +238,8 @@ impl Handler<Broadcast> for NodeController {
     type Result = Result<(), DispatchError>;
 
     fn handle(&mut self, msg: Broadcast, ctx: &mut Self::Context) -> Self::Result {
+        assert!(msg.procid.is_none());
+
         for n in self.links.values() {
             n.do_send(msg.clone());
         }
@@ -270,6 +275,7 @@ pub struct FromNode<M> {
 impl<M: Message> Message for FromNode<M> {
     type Result = M::Result;
 }
+
 // TODO: Remove this, unify dispatchers and handlers
 pub trait CallHandler: Send {
     fn handle(&mut self, node_id: Uuid, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
@@ -291,9 +297,9 @@ where M: Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
 
         Box::pin(async move {
             log::trace!("Running global message handler");
-            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
+            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)?;
             let mut buf = BytesMut::new();
-            //M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+            M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
             Ok(buf.freeze())
         })
     }
@@ -311,9 +317,9 @@ where M: Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
 
         Box::pin(async move {
             log::trace!("Running global message handler");
-            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
+            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)?;
             let mut buf = BytesMut::new();
-            //M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+            M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
             Ok(buf.freeze())
         })
     }
