@@ -7,7 +7,7 @@ use crate::util::RpcMethod;
 use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelope, Envelope, RecipientRequest};
 use actix::Handler;
 use std::pin::Pin;
-use crate::{ProcDispatch, MethodCall};
+use crate::{MethodCall};
 use prost::{DecodeError, EncodeError};
 
 pub mod registry;
@@ -253,11 +253,7 @@ impl<A: Actor + DynHandler> Pid<A> {
         match self {
             Pid::Local { addr, .. } => PidRequest::Local(addr.send(m)),
             Pid::Remote(id) => {
-                let dispatch = m.make_call();
-                let dispatch = ProcDispatch {
-                    procid: *id,
-                    inner: dispatch,
-                };
+                let dispatch = m.make_call(Some(*id));
                 PidRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
             }
         }
@@ -272,11 +268,7 @@ impl<A: Actor + DynHandler> Pid<A> {
         match self {
             Self::Local { addr, .. } => addr.do_send(m),
             Self::Remote(id) => {
-                let dispatch = m.make_broadcast();
-                let dispatch = ProcDispatch {
-                    procid: *id,
-                    inner: dispatch,
-                };
+                let dispatch = m.make_broadcast(Some(*id));
                 ProcessRegistry::from_registry().do_send(dispatch)
             }
         }
@@ -310,7 +302,7 @@ where A: Actor + Handler<M>,
 
 {
     Local(Request<A, M>),
-    Remote(Request<ProcessRegistry, ProcDispatch<MethodCall>>),
+    Remote(Request<ProcessRegistry, MethodCall>),
 }
 
 impl<A: Actor, M: Message> Future for PidRequest<A, M>
@@ -379,11 +371,7 @@ where M: Message + RpcMethod + Send,
         if let Some(ref local) = self.local {
             return PidRecipientRequest::Local(local.send(m));
         } else {
-            let dispatch = m.make_call();
-            let dispatch = ProcDispatch {
-                procid: self.id,
-                inner: dispatch,
-            };
+            let dispatch = m.make_call(Some(self.id));
             PidRecipientRequest::Remote(ProcessRegistry::from_registry().send(dispatch))
         }
     }
@@ -392,11 +380,7 @@ where M: Message + RpcMethod + Send,
         if let Some(ref local) = self.local {
             local.do_send(m)
         } else {
-            let dispatch = m.make_call();
-            let dispatch = ProcDispatch {
-                procid: self.id,
-                inner: dispatch,
-            };
+            let dispatch = m.make_call(Some(self.id));
             Ok(ProcessRegistry::from_registry().do_send(dispatch))
         }
     }
@@ -406,7 +390,7 @@ pub enum PidRecipientRequest<M>
 where M: Message + Send + 'static,
       M::Result: Send {
     Local(RecipientRequest<M>),
-    Remote(Request<ProcessRegistry, ProcDispatch<MethodCall>>),
+    Remote(Request<ProcessRegistry, MethodCall>),
 }
 
 impl<M: Message> Future for PidRecipientRequest<M>

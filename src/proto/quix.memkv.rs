@@ -23,27 +23,27 @@ use quix::derive::*;
 pub struct Get(pub Key);
 
 pub trait GetAddr {
-    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>>;
+    fn get(&self, arg: Key) -> BoxFuture<'static, Value>;
 }
 
 impl<A> GetAddr for Pid<A> where A: Handler<Get> + DynHandler {
-    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>> {
+    fn get(&self, arg: Key) -> BoxFuture<'static, Value> {
         Box::pin(self.send(Get(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
 impl GetAddr for PidRecipient<Get> {
-    fn get(&self, arg: Key) -> BoxFuture<'static, Result<Value, DispatchError>> {
+    fn get(&self, arg: Key) -> BoxFuture<'static, Value> {
         Box::pin(self.send(Get(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
 impl GetAddr for NodeId {
-    fn get(&self, arg: Key) ->BoxFuture<'static, Result<Value, DispatchError>> {
+    fn get(&self, arg: Key) ->BoxFuture<'static, Value> {
         Box::pin(self.send(Get(arg)))
     }
 }
 
 impl actix::Message for Get {
-    type Result = Result<Value, DispatchError>;
+    type Result = Value;
 }
 
 impl quix::derive::RpcMethod for Get {
@@ -59,11 +59,11 @@ impl quix::derive::RpcMethod for Get {
     }
 
     fn read_result(b: impl bytes::Buf) -> Self::Result {
-        Ok(<Value>::decode(b)?)
+        <Value>::decode(b)
     }
 
     fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
-        let a: &Value = res.as_ref()?; a.encode(b)?;
+        res.encode(b)?;;
         Ok(())
     }
 }

@@ -27,15 +27,17 @@ pub trait RpcMethod: Sized + Message {
         return Ok(b.freeze());
     }
 
-    fn make_broadcast(&self) -> Broadcast {
+    fn make_broadcast(&self, id: Option<Uuid>) -> Broadcast {
         Broadcast {
+            procid: id,
             method: Self::ID,
             body: RpcMethod::to_buf(self).unwrap(),
         }
     }
 
-    fn make_call(&self) -> MethodCall {
+    fn make_call(&self, id: Option<Uuid>) -> MethodCall {
         MethodCall {
+            procid: id,
             body: RpcMethod::to_buf(self).unwrap(),
             method: Self::ID,
         }

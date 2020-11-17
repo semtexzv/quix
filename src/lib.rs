@@ -48,13 +48,15 @@ pub use crate::process::DispatchError;
 
 #[derive(Debug, Clone)]
 pub struct Broadcast {
+    pub(crate) procid: Option<Uuid>,
     pub(crate) method: u32,
     pub(crate) body: Bytes,
 }
 
 impl Broadcast {
-    pub fn make(method: u32, body: Bytes) -> Self {
+    pub fn make(procid: Option<Uuid>, method: u32, body: Bytes) -> Self {
         Self {
+            procid,
             method,
             body,
         }
@@ -77,7 +79,7 @@ where M: Message<Result=Result<R, DispatchError>> + 'static,
 {
     type Result = Result<R, DispatchError>;
 }
-
+/*
 // Send a specified message to a specified process
 pub struct ProcDispatch<M> {
     pub(crate) procid: Uuid,
@@ -90,6 +92,7 @@ where M: Message<Result=Result<R, DispatchError>> + 'static,
 {
     type Result = Result<R, DispatchError>;
 }
+*/
 
 
 //pub struct DynHandler<M> {}
@@ -102,6 +105,7 @@ where M: Message<Result=Result<R, DispatchError>> + 'static,
 /// Otherwise sets up a correlation counter and waits for response with a timeout(to prevent DOS attacks on correlation cache)
 #[derive(Debug, Clone)]
 pub struct MethodCall {
+    pub(crate) procid: Option<Uuid>,
     pub(crate) method: u32,
     pub(crate) body: Bytes,
 }

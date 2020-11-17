@@ -20,15 +20,15 @@ impl prost_build::ServiceGenerator for Generator {
         for m in service.methods {
             let methodname = &m.name;
             let name = &m.proto_name;
-            let rettype = format!("Result<{}, DispatchError>", m.output_type);
+            let rettype = &m.output_type;
             let input = &m.input_type;
 
             // TODO: Fix this crap
             let (out_read, out_write) = if m.output_proto_type == ".google.protobuf.Empty" {
                 ("()".to_string(), "()".to_string())
             } else {
-                (format!("<{}>::decode(b)?", m.output_type),
-                 format!("let a: &{o} = res.as_ref()?; a.encode(b)?", o = m.output_type)
+                (format!("<{}>::decode(b)", m.output_type),
+                 format!("res.encode(b)?;")
                 )
             };
 
@@ -80,7 +80,7 @@ impl quix::derive::RpcMethod for {name} {{
     }}
 
     fn read_result(b: impl bytes::Buf) -> Self::Result {{
-        Ok({out_read})
+        {out_read}
     }}
 
     fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{

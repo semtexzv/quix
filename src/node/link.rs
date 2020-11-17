@@ -16,7 +16,6 @@ use crate::{
     util::RpcMethod,
     util::uuid,
     MethodCall,
-    ProcDispatch,
 };
 
 use std::io;
@@ -143,16 +142,13 @@ impl NodeLink {
         let procid: Option<Uuid> = req.procid.map(uuid).filter(|v| !v.is_nil());
 
         let dispatch = MethodCall {
+            procid,
             method: req.methodid,
             body: Bytes::from(req.body),
         };
+
         if let Some(procid) = procid {
             let procreg = ProcessRegistry::from_registry();
-
-            let dispatch = ProcDispatch {
-                procid,
-                inner: dispatch,
-            };
 
             if let Some(corr) = req.correlation {
                 let work = wrap_future(procreg.send(dispatch).map(|r| r.unwrap()));
@@ -269,12 +265,17 @@ impl Handler<MethodCall> for NodeLink {
     fn handle(&mut self, msg: MethodCall, ctx: &mut Context<Self>) -> Self::Result {
         let mut req = Request {
             correlation: None,
-            procid: None,
-
+            procid: msg.procid.map(|id| id.as_bytes().to_vec()),
             methodid: msg.method,
             body: msg.body.to_vec(),
         };
+        return self.send_request(ctx, req);
+    }
+}
 
+
+impl NodeLink {
+    pub(crate) fn send_request(&mut self, ctx: &mut Context<NodeLink>, mut req: Request) -> actix::Response<Bytes, DispatchError> {
         self.correlation_counter = self.correlation_counter.wrapping_add(1);
 
         let (tx, rx) = futures::channel::oneshot::channel();

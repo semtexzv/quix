@@ -5,7 +5,7 @@ use crate::process::{Dispatcher, DynHandler, Pid, Process, DispatchError};
 use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeStatus};
 use crate::util::{RegisterRecipient, RpcMethod};
 use crate::proto::{Update, ProcessList};
-use crate::{NodeDispatch, MethodCall, ProcDispatch, Broadcast};
+use crate::{NodeDispatch, MethodCall, Broadcast};
 
 pub struct ProcessRegistry {
     local: HashMap<Uuid, Box<dyn Dispatcher>>,
@@ -64,7 +64,7 @@ impl Supervised for ProcessRegistry {
                 delids: del.iter().fold(vec![], fold_uuids),
             };
 
-            let bcast = Update(plist).make_broadcast();
+            let bcast = Update(plist).make_broadcast(None);
 
             let bcast = NodeController::from_registry().do_send(bcast);
         });
@@ -72,7 +72,7 @@ impl Supervised for ProcessRegistry {
 }
 
 impl Handler<FromNode<Update>> for ProcessRegistry {
-    type Result = Result<(), DispatchError>;
+    type Result = ();
 
     fn handle(&mut self, msg: FromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
@@ -88,7 +88,6 @@ impl Handler<FromNode<Update>> for ProcessRegistry {
             log::info!("Proc: {} running on {}", new, node);
             self.nodes.insert(new, node);
         }
-        Ok(())
     }
 }
 
@@ -106,7 +105,7 @@ impl Handler<NodeStatus> for ProcessRegistry {
 
             let msg = NodeDispatch {
                 nodeid: id,
-                inner: Update(update).make_broadcast(),
+                inner: Update(update).make_broadcast(None),
             };
 
             let fut = control.send(msg);
@@ -163,18 +162,18 @@ impl Handler<Unregister> for ProcessRegistry {
     }
 }
 
-impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
+impl Handler<MethodCall> for ProcessRegistry {
     type Result = Response<Bytes, DispatchError>;
 
-    fn handle(&mut self, msg: ProcDispatch<MethodCall>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: MethodCall, ctx: &mut Context<Self>) -> Self::Result {
         // TODO: Separate handling of dispatch coming from other nodes, prevent cycles
-        if let Some(p) = self.local.get(&msg.procid) {
-            Response::fut(p.dispatch(msg.inner.method, msg.inner.body))
+        if let Some(p) = self.local.get(&msg.procid.unwrap()) {
+            Response::fut(p.dispatch(msg.method, msg.body))
         } else {
-            if let Some(node) = self.nodes.get(&msg.procid) {
+            if let Some(node) = self.nodes.get(&msg.procid.unwrap()) {
                 let msg = NodeDispatch {
                     nodeid: *node,
-                    inner: msg.inner,
+                    inner: msg,
                 };
                 Response::fut(NodeController::from_registry().send(msg).map(|x| x.unwrap()))
             } else {
@@ -184,19 +183,19 @@ impl Handler<ProcDispatch<MethodCall>> for ProcessRegistry {
     }
 }
 
-impl Handler<ProcDispatch<Broadcast>> for ProcessRegistry {
+impl Handler<Broadcast> for ProcessRegistry {
     type Result = Response<(), DispatchError>;
 
-    fn handle(&mut self, msg: ProcDispatch<Broadcast>, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Broadcast, ctx: &mut Context<Self>) -> Self::Result {
         // TODO: Separate handling of dispatch coming from other nodes, prevent cycles
-        if let Some(p) = self.local.get(&msg.procid) {
-            ctx.spawn(wrap_future(p.dispatch(msg.inner.method, msg.inner.body).map(|_| ())));
+        if let Some(p) = self.local.get(&msg.procid.unwrap()) {
+            ctx.spawn(wrap_future(p.dispatch(msg.method, msg.body).map(|_| ())));
             Response::reply(Ok(()))
         } else {
-            if let Some(node) = self.nodes.get(&msg.procid) {
+            if let Some(node) = self.nodes.get(&msg.procid.unwrap()) {
                 let msg = NodeDispatch {
                     nodeid: *node,
-                    inner: msg.inner,
+                    inner: msg,
                 };
                 NodeController::from_registry().do_send(msg);
                 Response::reply(Ok(()))

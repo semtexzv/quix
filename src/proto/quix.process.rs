@@ -16,27 +16,27 @@ use quix::derive::*;
 pub struct Update(pub ProcessList);
 
 pub trait UpdateAddr {
-    fn update(&self, arg: ProcessList) -> BoxFuture<'static, Result<(), DispatchError>>;
+    fn update(&self, arg: ProcessList) -> BoxFuture<'static, ()>;
 }
 
 impl<A> UpdateAddr for Pid<A> where A: Handler<Update> + DynHandler {
-    fn update(&self, arg: ProcessList) -> BoxFuture<'static, Result<(), DispatchError>> {
+    fn update(&self, arg: ProcessList) -> BoxFuture<'static, ()> {
         Box::pin(self.send(Update(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
 impl UpdateAddr for PidRecipient<Update> {
-    fn update(&self, arg: ProcessList) -> BoxFuture<'static, Result<(), DispatchError>> {
+    fn update(&self, arg: ProcessList) -> BoxFuture<'static, ()> {
         Box::pin(self.send(Update(arg)).map(|r| r.and_then(|r|r) ))
     }
 }
 impl UpdateAddr for NodeId {
-    fn update(&self, arg: ProcessList) ->BoxFuture<'static, Result<(), DispatchError>> {
+    fn update(&self, arg: ProcessList) ->BoxFuture<'static, ()> {
         Box::pin(self.send(Update(arg)))
     }
 }
 
 impl actix::Message for Update {
-    type Result = Result<(), DispatchError>;
+    type Result = ();
 }
 
 impl quix::derive::RpcMethod for Update {
@@ -52,7 +52,7 @@ impl quix::derive::RpcMethod for Update {
     }
 
     fn read_result(b: impl bytes::Buf) -> Self::Result {
-        Ok(())
+        ()
     }
 
     fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
