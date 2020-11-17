@@ -9,7 +9,6 @@ message PidProto {
 
 // List of created/deleted process ids
 message ProcessList {
-  bytes nodeid = 1;
   bytes newids = 2;
   bytes delids = 3;
 }

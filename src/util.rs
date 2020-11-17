@@ -10,7 +10,6 @@ impl<M> Message for RegisterRecipient<M> where M: Message + Send,
                                                M::Result: Send
 { type Result = Result<Uuid, std::convert::Infallible>; }
 
-
 pub trait RpcMethod: Sized + Message {
     const NAME: &'static str;
     // Unique ID of the service method. Should be crc64 of Name
@@ -42,6 +41,7 @@ pub trait RpcMethod: Sized + Message {
         }
     }
 }
+
 
 pub fn uuid(data: impl AsRef<[u8]>) -> Uuid {
     Uuid::from_bytes(data.as_ref().try_into().unwrap())

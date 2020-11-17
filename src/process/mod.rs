@@ -8,10 +8,11 @@ use actix::dev::{ContextParts, Mailbox, ContextFut, AsyncContextParts, ToEnvelop
 use actix::Handler;
 use std::pin::Pin;
 use crate::{ProcDispatch, MethodCall};
+use prost::{DecodeError, EncodeError};
 
 pub mod registry;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum DispatchError {
     ProcessNotFound = 1,
     MethodNotFound = 2,
@@ -23,8 +24,7 @@ pub enum DispatchError {
     MailboxLocal,
 
     Protocol,
-    Other
-
+    Other,
 }
 
 impl DispatchError {
@@ -51,6 +51,25 @@ impl DispatchError {
         }
     }
 }
+
+impl From<&DispatchError> for DispatchError {
+    fn from(v: &DispatchError) -> Self {
+        *v
+    }
+}
+
+impl From<DecodeError> for DispatchError {
+    fn from(e: DecodeError) -> Self {
+        DispatchError::MessageFormat
+    }
+}
+
+impl From<EncodeError> for DispatchError {
+    fn from(_: EncodeError) -> Self {
+        DispatchError::MessageFormat
+    }
+}
+
 
 /// Trait used to get generic dispatchers for different actors
 pub trait Dispatcher: Send + 'static {
@@ -325,8 +344,8 @@ pub struct PidRecipient<M>
 where M: Message + Send,
       M::Result: Send,
 {
-    id: Uuid,
-    local: Option<Recipient<M>>,
+    pub(crate) id: Uuid,
+    pub(crate) local: Option<Recipient<M>>,
 }
 
 impl<M> PidRecipient<M>
@@ -389,7 +408,6 @@ where M: Message + Send + 'static,
     Local(RecipientRequest<M>),
     Remote(Request<ProcessRegistry, ProcDispatch<MethodCall>>),
 }
-
 
 impl<M: Message> Future for PidRecipientRequest<M>
 where M: Message + RpcMethod + Unpin + Send,

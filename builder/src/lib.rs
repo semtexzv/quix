@@ -27,8 +27,8 @@ impl prost_build::ServiceGenerator for Generator {
             let (out_read, out_write) = if m.output_proto_type == ".google.protobuf.Empty" {
                 ("()".to_string(), "()".to_string())
             } else {
-                (format!("<{}>::decode(b).unwrap()", m.output_type),
-                 format!("let a: &{o} = res.as_ref().unwrap(); a.encode(b).unwrap()", o = m.output_type)
+                (format!("<{}>::decode(b)?", m.output_type),
+                 format!("let a: &{o} = res.as_ref()?; a.encode(b)?", o = m.output_type)
                 )
             };
 
@@ -68,9 +68,9 @@ impl actix::Message for {name} {{
 }}
 
 impl quix::derive::RpcMethod for {name} {{
-
     const NAME: &'static str = "{callspec}";
     const ID: u32 = {callid};
+
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {{
         prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)

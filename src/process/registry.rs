@@ -48,7 +48,7 @@ impl Supervised for ProcessRegistry {
         let control = NodeController::from_registry();
 
         control.do_send(RegisterRecipient(ctx.address().recipient::<NodeStatus>()));
-        control.do_send(RegisterGlobalHandler::new::<Update, _>(ctx.address().recipient()));
+        control.do_send(RegisterGlobalHandler::with_nodeinfo::<Update, _>(ctx.address().recipient()));
 
         ctx.run_interval(Duration::from_millis(800), |this, ctx| {
             if this.new.is_empty() && this.deleted.is_empty() {
@@ -71,10 +71,10 @@ impl Supervised for ProcessRegistry {
     }
 }
 
-impl Handler<Update> for ProcessRegistry {
+impl Handler<FromNode<Update>> for ProcessRegistry {
     type Result = Result<(), DispatchError>;
 
-    fn handle(&mut self, msg: Update, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: FromNode<Update>, ctx: &mut Context<Self>) -> Self::Result {
         let node: Uuid = msg.node_id;
         log::info!("Received process update from remote node: {:?}", msg.node_id);
 

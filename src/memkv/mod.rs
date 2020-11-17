@@ -2,9 +2,10 @@ use crate::import::*;
 use crate::proto::{Get, Value, Key};
 use crate::{Process, NodeDispatch};
 use crate::process::DispatchError;
-use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeId};
+use crate::node::{NodeController, RegisterGlobalHandler, FromNode, NodeId, ListNodes};
 use crate::util::RpcMethod;
 use futures::TryStreamExt;
+use futures::stream::FuturesUnordered;
 
 pub struct Write {
     pub key: Vec<u8>,
@@ -25,6 +26,14 @@ pub struct RemoteRead {
 }
 
 impl Message for RemoteRead {
+    type Result = Result<Option<Vec<u8>>, DispatchError>;
+}
+
+pub struct GlobalFind {
+    pub key: Vec<u8>,
+}
+
+impl Message for GlobalFind {
     type Result = Result<Option<Vec<u8>>, DispatchError>;
 }
 
@@ -53,6 +62,28 @@ impl Handler<RemoteRead> for MemKv {
     }
 }
 
+impl Handler<GlobalFind> for MemKv {
+    type Result = ResponseFuture<Result<Option<Vec<u8>>, DispatchError>>;
+
+    fn handle(&mut self, msg: GlobalFind, ctx: &mut Context<Self>) -> Self::Result {
+        let nc = NodeController::from_registry();
+        let nodes = nc.send(ListNodes);
+
+        let uuids = nodes.map(|r| r.unwrap());
+        let res = async move {
+            let mut tasks: FuturesUnordered<_> = uuids.await.into_iter().map(|n| {
+                NodeId(n).send(Get(Key { data: msg.key.clone() })).map_ok(|v| v.data)
+            }).collect();
+            // We have received A response ( one future resolved, which had an OK result, and the result vas an actual value)
+            while let Some(Ok(Some(data))) = tasks.next().await {
+                return Ok(Some(data));
+            }
+            return Ok(None);
+        };
+        Box::pin(res)
+    }
+}
+
 /// Simple in-memory key-value store.
 /// Local instance can be modified, remote instances can be only read
 #[derive(Default)]
@@ -71,7 +102,6 @@ impl Actor for MemKv {
 impl Supervised for MemKv {}
 
 impl SystemService for MemKv {}
-
 
 
 impl Handler<Get> for MemKv {

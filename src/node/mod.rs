@@ -1,6 +1,5 @@
 use crate::import::*;
 
-
 mod link;
 
 use crate::node::link::NodeLink;
@@ -59,7 +58,7 @@ pub struct NodeController {
     ///
     /// Messages which are sent to process id of 00000000000000000....
     /// are considered unadressed, and are dispatched from here
-    pub dispatch: HashMap<u32, NodeHandler>,
+    pub dispatch: HashMap<u32, Box<dyn CallHandler>>,
     pub status_listeners: HashMap<Uuid, Recipient<NodeStatus>>,
 }
 
@@ -184,6 +183,19 @@ impl Handler<Connect> for NodeController {
     }
 }
 
+pub struct ListNodes;
+impl Message for ListNodes {
+    type Result = Vec<Uuid>;
+}
+
+impl Handler<ListNodes> for NodeController {
+    type Result = ResponseFuture<Vec<Uuid>>;
+
+    fn handle(&mut self, msg: ListNodes, ctx: &mut Context<Self>) -> Self::Result {
+        return Box::pin(futures::future::ready(self.links.keys().cloned().collect()));
+    }
+}
+
 // Per node broadcast, understood as calling default handler of method from node
 impl Handler<NodeDispatch<MethodCall>> for NodeController {
     type Result = actix::Response<Bytes, DispatchError>;
@@ -238,7 +250,7 @@ impl Handler<FromNode<MethodCall>> for NodeController {
         log::info!("NodeControl dispatching unadressed message");
         match self.dispatch.get_mut(&msg.inner.method) {
             Some(m) => {
-                let fut = (m)(msg.node_id, msg.inner.body);
+                let fut = (m).handle(msg.node_id, msg.inner.body);
                 Response::fut(fut)
             }
             None => {
@@ -258,44 +270,78 @@ pub struct FromNode<M> {
 impl<M: Message> Message for FromNode<M> {
     type Result = M::Result;
 }
+// TODO: Remove this, unify dispatchers and handlers
+pub trait CallHandler: Send {
+    fn handle(&mut self, node_id: Uuid, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>>;
+}
 
 
-pub type NodeHandler = Box<dyn FnMut(Uuid, Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>> + Send>;
+impl<M, T> CallHandler for Recipient<FromNode<M>>
+where M: Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
+      M::Result: Send
+{
+    fn handle(&mut self, node_id: Uuid, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>> {
+        let msg = M::read(data)
+            .map_err(|_| DispatchError::MessageFormat)
+            .map(|msg| FromNode {
+                node_id,
+                inner: msg,
+            })
+            .map(|msg| self.send(msg));
+
+        Box::pin(async move {
+            log::trace!("Running global message handler");
+            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
+            let mut buf = BytesMut::new();
+            //M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+            Ok(buf.freeze())
+        })
+    }
+}
+
+
+impl<M, T> CallHandler for Recipient<M>
+where M: Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
+      M::Result: Send
+{
+    fn handle(&mut self, node_id: Uuid, data: Bytes) -> BoxFuture<'static, Result<Bytes, DispatchError>> {
+        let msg = M::read(data)
+            .map_err(|_| DispatchError::MessageFormat)
+            .map(|msg| self.send(msg));
+
+        Box::pin(async move {
+            log::trace!("Running global message handler");
+            let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
+            let mut buf = BytesMut::new();
+            //M::write_result(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
+            Ok(buf.freeze())
+        })
+    }
+}
 
 pub struct RegisterGlobalHandler {
     method: u32,
-    handler: NodeHandler,
+    handler: Box<dyn CallHandler>,
 }
 
 impl RegisterGlobalHandler {
-    /// Create new registration request for node-wide handler
-    pub fn new<M, T>(rec: Recipient<FromNode<M>>) -> Self
+    pub fn with_nodeinfo<M, T>(rec: Recipient<FromNode<M>>) -> Self
     where M: actix::Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
           T: prost::Message + Send + 'static
     {
-        let handler = move |node_id, data| -> BoxFuture<'static, _> {
-            let rec = rec.clone();
-
-            let msg = M::read(data)
-                .map_err(|_| DispatchError::MessageFormat)
-                .map(|msg| FromNode {
-                    node_id,
-                    inner: msg,
-                })
-                .map(|msg| rec.send(msg));
-
-            Box::pin(async move {
-                log::trace!("Running global message handler");
-                let response = msg?.await.map_err(|_| DispatchError::MessageFormat)??;
-                let mut buf = BytesMut::new();
-                T::encode(&response, &mut buf).map_err(|_| DispatchError::MessageFormat)?;
-                Ok(buf.freeze())
-            })
-        };
-
         RegisterGlobalHandler {
             method: M::ID,
-            handler: Box::new(handler),
+            handler: Box::new(rec),
+        }
+    }
+    /// Create new registration request for node-wide handler
+    pub fn new<M, T>(rec: Recipient<M>) -> Self
+    where M: actix::Message<Result=Result<T, DispatchError>> + RpcMethod + Send + 'static,
+          T: prost::Message + Send + 'static
+    {
+        RegisterGlobalHandler {
+            method: M::ID,
+            handler: Box::new(rec),
         }
     }
 }

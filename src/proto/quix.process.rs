@@ -1,3 +1,8 @@
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PidProto {
+    #[prost(bytes, tag="1")]
+    pub pid: std::vec::Vec<u8>,
+}
 /// List of created/deleted process ids
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProcessList {
@@ -35,9 +40,9 @@ impl actix::Message for Update {
 }
 
 impl quix::derive::RpcMethod for Update {
-
     const NAME: &'static str = "quix.process.Process.update";
     const ID: u32 = 520454116;
+
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
         prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)

@@ -47,9 +47,9 @@ impl actix::Message for Get {
 }
 
 impl quix::derive::RpcMethod for Get {
-
     const NAME: &'static str = "quix.memkv.MemKv.get";
     const ID: u32 = 2761597858;
+
 
     fn write(&self, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
         prost::Message::encode(&self.0, b).map_err(|_| DispatchError::MessageFormat)
@@ -59,11 +59,11 @@ impl quix::derive::RpcMethod for Get {
     }
 
     fn read_result(b: impl bytes::Buf) -> Self::Result {
-        Ok(<Value>::decode(b).unwrap())
+        Ok(<Value>::decode(b)?)
     }
 
     fn write_result(res: &Self::Result, b: &mut impl bytes::BufMut) -> Result<(), DispatchError> {
-        let a: &Value = res.as_ref().unwrap(); a.encode(b).unwrap();
+        let a: &Value = res.as_ref()?; a.encode(b)?;
         Ok(())
     }
 }

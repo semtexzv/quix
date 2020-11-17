@@ -9,6 +9,7 @@ use bytes::{Buf, BufMut};
 use quix::process::DispatchError;
 
 use quix::proto::*;
+use quix::memkv::{MemKv, GlobalFind};
 
 #[derive(prost::Message)]
 pub struct M {
@@ -66,6 +67,7 @@ impl Handler<M> for Act {
 fn make_node(i: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
         actix::run(async move {
+            MemKv::from_registry().send(GlobalFind { key: vec![]}).await;
             tokio::time::delay_for(Duration::from_millis((i * 100) as u64)).await;
 
             let config = NodeConfig {
